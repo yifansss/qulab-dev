@@ -1,0 +1,64 @@
+[
+  {
+    "channel_name": "Channel 1",
+    "delay_off": 0.0,
+    "pulses": [
+      {
+        "rise": 1,
+        "time_on": 1.0,
+        "d": 10.0,
+        "type": "notype",
+        "phas": 0.0,
+        "pbn": 0,
+        "start_time": 2.0
+      },
+      {
+        "rise": 1,
+        "time_on": 1.0,
+        "d": 10.0,
+        "type": "notype",
+        "phas": 0.0,
+        "pbn": 0,
+        "start_time": 12.0
+      }
+    ],
+    "pbn": 0
+  },
+  {
+    "channel_name": "Channel 2",
+    "delay_off": 0.0,
+    "pulses": [],
+    "pbn": 1
+  },
+  {
+    "channel_name": "Channel 3",
+    "delay_off": 0.0,
+    "pulses": [
+      {
+        "rise": 1,
+        "time_on": 0.979,
+        "d": 10.0,
+        "type": "notype",
+        "phas": 0.0,
+        "pbn": 2,
+        "start_time": 7.0
+      },
+      {
+        "rise": 1,
+        "time_on": 1.0,
+        "d": 10.0,
+        "type": "notype",
+        "phas": 0.0,
+        "pbn": 2,
+        "start_time": 17.0
+      }
+    ],
+    "pbn": 2
+  },
+  {
+    "channel_name": "Channel 4",
+    "delay_off": 0.0,
+    "pulses": [],
+    "pbn": 3
+  }
+]

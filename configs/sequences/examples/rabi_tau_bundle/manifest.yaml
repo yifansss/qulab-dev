@@ -1,0 +1,37 @@
+schema_version: 1
+kind: sequence_bundle
+id: rabi_tau
+resource: asg
+format: pycontrol_asg_json
+
+coordinates:
+  tau_s:
+    unit: s
+    values: [20e-9, 40e-9, 60e-9]
+
+entries:
+  - id: tau_20ns
+    coordinates: {tau_s: 20e-9}
+    sequence_file: sequences/tau_20ns.json
+    metadata:
+      duration_s: 8e-6
+      trigger_channels: [ch6]
+      output_channels: [ch1, ch6]
+  - id: tau_40ns
+    coordinates: {tau_s: 40e-9}
+    sequence_file: sequences/tau_40ns.json
+    metadata:
+      duration_s: 8e-6
+      trigger_channels: [ch6]
+      output_channels: [ch1, ch6]
+  - id: tau_60ns
+    coordinates: {tau_s: 60e-9}
+    sequence_file: sequences/tau_60ns.json
+    metadata:
+      duration_s: 8e-6
+      trigger_channels: [ch6]
+      output_channels: [ch1, ch6]
+
+generator:
+  tool: standalone_sequence_editor
+  note: Example provenance only; Qulab does not execute this metadata.

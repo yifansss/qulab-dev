@@ -1,0 +1,86 @@
+schema_version: 1
+name: bench_02_ni_ao0_to_ai1_loopback
+description: >
+  NI-only AO/AI loopback test. Wire NI AO0 to NI AI1 and scan slow AO setpoints
+  while acquiring many AI1 samples per setpoint. This verifies NI AO writes,
+  AI1 scaling, terminal configuration, settle time, and one-slow-point to
+  many-fast-samples storage. Requires explicit AO authorization.
+tags: [bench, ni, ao, ai1, loopback, step_and_sample]
+
+bench:
+  stage: 02_ni_ao_ai_loopback
+  safety: analog_output
+  requires_allow_output: false
+  requires_allow_ao: true
+  wiring:
+    - NI Dev2/ao0 -> NI Dev2/ai1.
+    - NI AO ground -> AI reference/ground as required by terminal configuration.
+    - Optional oscilloscope CH1 on AO0 and CH2 on AI1.
+  operator_steps:
+    - Confirm AO0 voltage range is safe for anything connected to AI1.
+    - Run hardware_check with --allow-ao only after checking loopback wiring.
+    - Watch AO0 on oscilloscope step from -0.1 V to 0.1 V.
+    - Confirm AI1 trace follows AO0 after settle_time.
+  expected_observation:
+    - AI1 mean should track ao_voltage.
+    - AI1 traces should be stable after settle_time.
+    - Oscilloscope should show slow AO steps, not fast pulse output.
+
+resources:
+  daq:
+    adapter: pycontrol_ni
+    capabilities: [analog_input, analog_output]
+    driver: sync
+    device: Dev2
+    simulation: false
+    pycontrol_path: drivers/pycontrol
+
+sync:
+  master: daq
+  triggers: []
+  order:
+    configure: [daq]
+    arm: [daq]
+    start: [daq]
+    read: [daq]
+
+procedure:
+  - scan:
+      name: ao_voltage
+      values: {start: -0.1, stop: 0.1, points: 5}
+      body:
+        - measurement:
+            name: ao0_ai1_loopback_point
+            body:
+              - call: daq.set_ao_static
+                args:
+                  channel: ao0
+                  voltage: ${ao_voltage}
+              - call: daq.wait_settle
+                args: {seconds: 0.01}
+              - call: daq.configure_ai
+                args:
+                  channels: [ai1]
+                  sample_rate: 100000
+                  samples: 1000
+                  terminal_config: DIFF
+              - run:
+                  name: ai1_readback
+                  timeout_s: 5
+                  steps:
+                    - call: daq.arm
+                    - call: daq.read_analog
+                      save_as: ai1_trace
+
+cleanup:
+  - call: daq.set_ao_static
+    args: {channel: ao0, voltage: 0.0}
+  - call: daq.stop
+
+plot:
+  - type: line
+    x: ao_voltage
+    y: ai1_trace
+
+storage:
+  backends: [csv]

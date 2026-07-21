@@ -1,0 +1,35 @@
+schema_version: 1
+name: bench_12_low_power_rabi_family
+description: Stage 4 low-power Rabi plan. Replace every CHANGE_ME and confirm attenuation before authorization.
+safety:
+  template_only: true
+  requires_allow_output: true
+  requires_microwave_authorization: true
+  physically_verified: false
+  checklist: [Confirm frequency and low power, Confirm attenuation and MW port, Verify scope timing, Confirm NI PFI route]
+resources:
+  mw: {adapter: pycontrol_lmx, capabilities: [microwave_source], simulation: false, pycontrol_path: drivers/pycontrol, port: CHANGE_ME}
+  asg: {adapter: pycontrol_asg, capabilities: [pulse_sequencer, trigger_source], simulation: false, pycontrol_path: drivers/pycontrol}
+  daq: {adapter: pycontrol_ni, capabilities: [daq_counter, trigger_receiver], simulation: false, pycontrol_path: drivers/pycontrol, device: CHANGE_ME}
+sequence_plans:
+  low_power_rabi:
+    resource: asg
+    family: {provider: rabi, version: "2"}
+    parameters: {tau_s: {mode: explicit, values: [20.0e-9, 60.0e-9, 100.0e-9], unit: s}}
+    sampling: {mode: cartesian, order: [tau_s]}
+    materialize: {cache: true, max_points: 5}
+sync:
+  master: asg
+  triggers: [{source: asg.ch6, target: daq.PFI0, edge: rising, purpose: daq_start_trigger}]
+  order: {configure: [mw, daq, asg], arm: [daq, asg], start: [asg], read: [daq]}
+setup:
+  - {call: mw.set_frequency, args: {frequency_hz: 2.87e9}}
+  - {call: mw.set_power, args: {power_dbm: -30}}
+procedure:
+  - sequence_sweep:
+      plan: low_power_rabi
+      body:
+        - measurement:
+            name: low_power_point
+            body: [{call: asg.compile_sequence}, {call: daq.arm}, {call: asg.arm}, {call: asg.start}, {call: daq.read_counts, save_as: counts}]
+cleanup: [{call: asg.stop}, {call: mw.output_off}, {call: daq.stop}]

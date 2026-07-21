@@ -1,0 +1,22 @@
+schema_version: 1
+name: mock_nv_setup
+resources:
+  mw:
+    adapter: mock_microwave
+    capabilities: [microwave_source]
+    connect_on_load: true
+    frequency_hz: "2.87e9"
+    power_dbm: -10
+  asg:
+    adapter: mock_asg
+    capabilities: [pulse_sequencer, trigger_source]
+    connect_on_load: true
+    sequence_file: sequences/default_readout.yaml
+  daq:
+    adapter: mock_daq
+    capabilities: [daq_counter, analog_input, trigger_receiver]
+    connect_on_load: true
+  aio:
+    adapter: mock_analog_io
+    capabilities: [analog_input, analog_output]
+    connect_on_load: true

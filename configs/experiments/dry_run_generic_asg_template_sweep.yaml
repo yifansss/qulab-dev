@@ -1,0 +1,52 @@
+schema_version: 1
+name: dry_run_generic_asg_template_sweep
+resources:
+  asg: {adapter: mock_asg, capabilities: [pulse_sequencer, trigger_source]}
+  daq: {adapter: mock_daq, capabilities: [daq_counter, trigger_receiver]}
+sequence_plans:
+  generic_rabi:
+    resource: asg
+    family: {provider: qulab.sequence_generation.providers.asg_template, version: "1"}
+    template: configs/sequences/examples/generic_rabi_base.json
+    targets:
+      mw_pulse: {channel: Channel 1, pulse: 0}
+      readout_gate: {channel: ch6, pulse: 0}
+    groups:
+      readout_related: [readout_gate]
+    parameters:
+      tau_s:
+        mode: explicit
+        values: [20.0e-9, 60.0e-9]
+        unit: s
+        transform:
+          target: mw_pulse
+          property: duration
+          propagation: {mode: shift_after, scope: all_channels, boundary: target_end}
+      readout_shift_s:
+        mode: explicit
+        values: [0.0, 0.5e-6]
+        unit: s
+        transform: {target: readout_gate, property: shift}
+    sampling: {mode: cartesian, order: [tau_s, readout_shift_s]}
+    materialize: {cache: true, max_points: 100}
+    options: {trigger_channels: [Channel 6], readout_window_s: 2.0e-6}
+sync:
+  master: asg
+  triggers: [{source: asg.ch6, target: daq.PFI0, edge: rising, purpose: daq_start_trigger}]
+  order: {configure: [daq, asg], arm: [daq, asg], start: [asg], read: [daq]}
+procedure:
+  - sequence_sweep:
+      plan: generic_rabi
+      body:
+        - measurement:
+            name: generic_rabi_point
+            body:
+              - call: asg.compile_sequence
+              - run:
+                  steps:
+                    - call: daq.arm
+                    - call: asg.arm
+                    - call: asg.start
+                    - call: daq.read_counts
+                      save_as: counts
+cleanup: [{call: asg.stop}, {call: daq.stop}]

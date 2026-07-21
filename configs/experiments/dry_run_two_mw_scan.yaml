@@ -1,0 +1,78 @@
+schema_version: 1
+name: dry_run_two_mw_scan
+description: Mock two-microwave-source example; switch adapters to pycontrol_lmx for real hardware after bench review.
+tags: [dry_run, multi_mw]
+
+resources:
+  mw_drive:
+    adapter: mock_microwave
+    capabilities: [microwave_source]
+    simulation: true
+    frequency_hz: "2.87e9"
+    power_dbm: -20
+  mw_probe:
+    adapter: mock_microwave
+    capabilities: [microwave_source]
+    simulation: true
+    frequency_hz: "2.86e9"
+    power_dbm: -30
+  daq:
+    adapter: mock_daq
+    capabilities: [daq_counter, analog_input, trigger_receiver]
+    simulation: true
+
+sync:
+  master: daq
+  triggers: []
+  order:
+    configure: [mw_drive, mw_probe, daq]
+    arm: [daq]
+    start: []
+    read: [daq]
+
+setup:
+  - call: mw_drive.set_frequency
+    args: {freq_hz: "2.87e9"}
+  - call: mw_drive.set_power
+    args: {power_dbm: -20}
+  - call: mw_probe.set_power
+    args: {power_dbm: -30}
+  - call: daq.configure_counter
+    args: {sample_rate: 1000000, samples: 1000, source: ctr0, trigger: PFI0}
+
+procedure:
+  - scan:
+      name: drive_freq_hz
+      values: {start: "2.869e9", stop: "2.871e9", points: 2}
+      body:
+        - call: mw_drive.set_frequency
+          args: {freq_hz: "${drive_freq_hz}"}
+        - scan:
+            name: probe_freq_hz
+            values: {start: "2.86e9", stop: "2.88e9", points: 3}
+            body:
+              - measurement:
+                  name: two_mw_point
+                  body:
+                    - call: mw_probe.set_frequency
+                      args: {freq_hz: "${probe_freq_hz}"}
+                    - run:
+                        name: mock_readout
+                        timeout_s: 5
+                        steps:
+                          - call: daq.arm
+                          - call: daq.read_counts
+                            save_as: counts
+
+cleanup:
+  - call: mw_drive.output_off
+  - call: mw_probe.output_off
+  - call: daq.stop
+
+plot:
+  - type: heatmap
+    x: probe_freq_hz
+    y: drive_freq_hz
+    z: counts
+
+storage: {}

@@ -1,0 +1,34 @@
+[
+  {
+    "channel_name": "Channel 1",
+    "delay_off": 0.0,
+    "pulses": [
+      {
+        "rise": 1,
+        "time_on": 20.0,
+        "d": 10.0,
+        "type": "notype",
+        "phas": 0.0,
+        "pbn": 0,
+        "start_time": 5.0
+      }
+    ],
+    "pbn": 0
+  },
+  {
+    "channel_name": "Channel 6",
+    "delay_off": 0.0,
+    "pulses": [
+      {
+        "rise": 1,
+        "time_on": 2.0,
+        "d": 10.0,
+        "type": "notype",
+        "phas": 0.0,
+        "pbn": 5,
+        "start_time": 1.0
+      }
+    ],
+    "pbn": 5
+  }
+]

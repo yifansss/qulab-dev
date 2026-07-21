@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+.coverage
+htmlcov/
+
+# Secrets and machine-local configuration
+.env
+.env.*
+!.env.example
+*.local.yaml
+*.local.yml
+*.local.json
+*.pem
+*.key
+
+# Local data and runs
+data/*
+!data/.gitkeep
+runs/*
+!runs/.gitkeep
+demo_runs/
+
+# Independently versioned hardware drivers (clone separately)
+/drivers/pycontrol/
+
+# Historical snapshots and local archives
+/qulab/
+/*.zip
+
+# Hardware/vendor binaries
+*.dll
+*.so
+*.dylib
+*.bin
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/
+Thumbs.db

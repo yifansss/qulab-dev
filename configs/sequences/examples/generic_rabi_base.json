@@ -1,0 +1,19 @@
+[
+  {
+    "channel_name": "Channel 1",
+    "delay_off": 0.0,
+    "pbn": 0,
+    "vendor_note": "microwave",
+    "pulses": [
+      {"pbn": 0, "rise": 1, "time_on": 0.1, "d": 10.0, "start_time": 3.0, "type": "notype", "phas": 0.0}
+    ]
+  },
+  {
+    "channel_name": "Channel 6",
+    "delay_off": 0.0,
+    "pbn": 5,
+    "pulses": [
+      {"pbn": 5, "rise": 1, "time_on": 2.0, "d": 10.0, "start_time": 5.0, "type": "notype", "phas": 0.0}
+    ]
+  }
+]

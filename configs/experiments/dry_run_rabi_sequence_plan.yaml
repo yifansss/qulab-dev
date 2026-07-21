@@ -1,0 +1,69 @@
+schema_version: 1
+name: dry_run_rabi_sequence_plan
+description: Rabi scan generated from one authoring plan during Prepare.
+tags: [rabi, sequence_generation, dry_run]
+
+resources:
+  asg:
+    adapter: mock_asg
+    capabilities: [pulse_sequencer, trigger_source]
+  daq:
+    adapter: mock_daq
+    capabilities: [daq_counter, trigger_receiver]
+
+sequence_plans:
+  rabi_main:
+    resource: asg
+    family:
+      provider: qulab.sequence_generation.providers.rabi
+      version: "2"
+    parameters:
+      laser_init_s: {mode: fixed, value: 3.0e-6, unit: s}
+      tau_s: {mode: linspace, start: 20.0e-9, stop: 60.0e-9, points: 3, unit: s}
+      readout_s: {mode: fixed, value: 2.0e-6, unit: s}
+    sampling:
+      mode: cartesian
+      order: [tau_s]
+    materialize:
+      cache: true
+      max_points: 10000
+
+sync:
+  master: asg
+  triggers:
+    - {source: asg.ch6, target: daq.PFI0, edge: rising, purpose: daq_start_trigger}
+  order:
+    configure: [daq, asg]
+    arm: [daq, asg]
+    start: [asg]
+    read: [daq]
+
+setup:
+  - call: daq.configure_counter
+    args: {sample_rate: 1.0e6, samples: 16, trigger: PFI0}
+
+procedure:
+  - sequence_sweep:
+      plan: rabi_main
+      body:
+        - measurement:
+            name: rabi_point
+            body:
+              - call: asg.compile_sequence
+              - run:
+                  name: pulse_readout
+                  steps:
+                    - call: daq.arm
+                    - call: asg.arm
+                    - call: asg.start
+                    - call: daq.read_counts
+                      save_as: counts
+
+cleanup:
+  - call: asg.stop
+  - call: daq.stop
+
+plot:
+  - {type: line, x: tau_s, y: counts}
+storage:
+  backend: csv

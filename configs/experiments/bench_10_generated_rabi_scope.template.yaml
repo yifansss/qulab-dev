@@ -1,0 +1,25 @@
+schema_version: 1
+name: bench_10_generated_rabi_scope
+description: Stage 2 template. Generated Rabi TTL only; verify first/middle/last on a scope before connecting loads.
+safety:
+  template_only: true
+  requires_allow_output: true
+  physically_verified: false
+  checklist: [Confirm ASG port and TTL voltage, Disconnect laser and MW loads, Connect scope, Start with three tau points]
+resources:
+  asg: {adapter: pycontrol_asg, capabilities: [pulse_sequencer, trigger_source], simulation: false, pycontrol_path: drivers/pycontrol}
+sequence_plans:
+  rabi_scope:
+    resource: asg
+    family: {provider: rabi, version: "2"}
+    parameters: {tau_s: {mode: explicit, values: [20.0e-9, 60.0e-9, 100.0e-9], unit: s}}
+    sampling: {mode: cartesian, order: [tau_s]}
+    materialize: {cache: true, max_points: 5}
+procedure:
+  - sequence_sweep:
+      plan: rabi_scope
+      body:
+        - measurement:
+            name: scope_point
+            body: [{call: asg.compile_sequence}, {call: asg.arm}, {call: asg.start}]
+cleanup: [{call: asg.stop}]

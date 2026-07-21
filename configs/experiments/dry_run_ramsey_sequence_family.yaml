@@ -1,0 +1,30 @@
+schema_version: 1
+name: dry_run_ramsey_sequence_family
+resources:
+  asg: {adapter: mock_asg, capabilities: [pulse_sequencer, trigger_source]}
+  daq: {adapter: mock_daq, capabilities: [daq_counter, trigger_receiver]}
+sequence_plans:
+  ramsey:
+    resource: asg
+    family: {provider: ramsey, version: "1"}
+    parameters:
+      free_evolution_s: {mode: explicit, values: [0.2e-6, 0.5e-6, 1.0e-6], unit: s}
+    sampling: {mode: cartesian, order: [free_evolution_s]}
+    materialize: {cache: true, max_points: 20}
+sync:
+  master: asg
+  triggers: [{source: asg.ch6, target: daq.PFI0, edge: rising, purpose: daq_start_trigger}]
+  order: {configure: [daq, asg], arm: [daq, asg], start: [asg], read: [daq]}
+setup: [{call: daq.configure_counter, args: {sample_rate: 1.0e6, samples: 16, trigger: PFI0}}]
+procedure:
+  - sequence_sweep:
+      plan: ramsey
+      body:
+        - measurement:
+            name: ramsey_point
+            body:
+              - call: asg.compile_sequence
+              - run:
+                  steps: [{call: daq.arm}, {call: asg.arm}, {call: asg.start}, {call: daq.read_counts, save_as: counts}]
+cleanup: [{call: asg.stop}, {call: daq.stop}]
+storage: {backend: csv}

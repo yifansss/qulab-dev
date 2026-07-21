@@ -1,0 +1,507 @@
+"""Headless-friendly backend for the Tk operator console."""
+
+from __future__ import annotations
+
+from copy import deepcopy
+from pathlib import Path
+from typing import Any, Callable
+
+from qulab.config import ParsedExperiment, load_experiment_config, parse_experiment_config
+from qulab.config.errors import ConfigValidationError
+from qulab.config.refs import parameter_refs_to_strings
+from qulab.core import Event, EventBus, ExperimentExecutor
+from qulab.sequence_files import discover_sequence_references, inspect_sequence_file
+from qulab.sequence_generation import SequenceGenerationError, prepare_and_parse_experiment_config
+from qulab.sequence_generation.preparation import parse_sequence_plans
+from qulab.sequence_generation.registry import DEFAULT_PROVIDER_REGISTRY
+from qulab.sequence_generation.sampling import normalize_parameter_values
+from qulab.sequence_generation.providers.asg_model import build_target_selector, inspect_template
+from qulab.storage import DatasetModel, RunReader, RunStore, SliceController
+from qulab.storage.run_reader import BackendPreference
+from qulab.storage.slicing import HeatmapData, LineData, TraceData
+from .workflow_model import (
+    Path as WorkflowPath,
+    add_step,
+    build_workflow_tree,
+    delete_step,
+    duplicate_step,
+    update_node,
+)
+from .yaml_editor import save_config_yaml
+
+from .models import (
+    ParameterEdit,
+    PreflightIssueViewModel,
+    PreflightViewModel,
+    ResourceViewModel,
+    RunViewModel,
+    SequenceSnapshotViewModel,
+    extract_parameter_edits,
+    parse_parameter_value,
+    update_config_value,
+)
+from .operator_parameters import OperatorParameterSpec, apply_operator_parameter, discover_operator_parameters
+from .sequence_sweep_model import PlanEstimate, SequencePlanViewModel, SequenceSweepEditorModel
+
+
+class OperatorController:
+    """Load, edit, preflight, and execute mock/dry-run experiment configs."""
+
+    def __init__(self, run_root: Path | str = "runs") -> None:
+        self.run_root = Path(run_root)
+        self.config_path: Path | None = None
+        self.config: dict[str, Any] | None = None
+        self.parsed: ParsedExperiment | None = None
+        self.last_run_path: Path | None = None
+        self.sequence_sweep_model: SequenceSweepEditorModel | None = None
+
+    @property
+    def current_config(self) -> dict[str, Any]:
+        self._require_config()
+        assert self.config is not None
+        return deepcopy(self.config)
+
+    def load_config(self, path: Path | str) -> None:
+        self.config_path = Path(path)
+        self.config = load_experiment_config(self.config_path)
+        self.parsed = None
+        self.sequence_sweep_model = SequenceSweepEditorModel.load(self.config)
+
+    def save_config(self, path: Path | str) -> Path:
+        self._require_config()
+        assert self.config is not None
+        save_path = save_config_yaml(self.config, path)
+        self.config_path = save_path
+        return save_path
+
+    def get_parameter_edit_model(self) -> list[ParameterEdit]:
+        self._require_config()
+        assert self.config is not None
+        return extract_parameter_edits(self.config)
+
+    def update_parameter(self, path_or_id: str, value: Any) -> None:
+        self._require_config()
+        assert self.config is not None
+        edits = self.get_parameter_edit_model()
+        edit_by_id = {edit.id: edit for edit in edits}
+        edit = edit_by_id.get(path_or_id)
+        if edit is None:
+            raise KeyError(f"Unknown editable parameter: {path_or_id}")
+        parsed_value = parse_parameter_value(value, edit.value_type) if isinstance(value, str) else value
+        update_config_value(self.config, edit.path, parsed_value)
+        self.parsed = None
+
+    def get_operator_parameters(self) -> list[OperatorParameterSpec]:
+        self._require_config()
+        assert self.config is not None
+        return discover_operator_parameters(self.workflow_tree(), self.config)
+
+    def apply_operator_parameter(self, spec_name: str, value: Any) -> None:
+        self._require_config()
+        assert self.config is not None
+        specs = {item.name: item for item in self.get_operator_parameters()}
+        selected = specs.get(spec_name)
+        apply_operator_parameter(self.workflow_tree(), self.config, spec_name, value)
+        if selected is not None and selected.source.startswith("sequence_plans."):
+            parts = selected.source.split(".")
+            if len(parts) > 1:
+                self._sequence_model()._edited(parts[1])
+        self.parsed = None
+
+    def prepare(self) -> PreflightViewModel:
+        self._require_config()
+        assert self.config is not None
+        try:
+            self.parsed = prepare_and_parse_experiment_config(deepcopy(self.config))
+        except SequenceGenerationError as exc:
+            raise ConfigValidationError(f"[{exc.code}] {exc}") from exc
+        if self.sequence_sweep_model is not None and self.parsed.sequence_preparation is not None:
+            for plan_id, bundle in self.parsed.sequence_preparation.materialized.items():
+                self.sequence_sweep_model.mark_prepared(plan_id, bundle.plan_hash)
+        return self._preflight_view(self.parsed)
+
+    def list_sequence_plans(self) -> list[SequencePlanViewModel]:
+        return self._sequence_model().list_plans()
+
+    def list_sequence_providers(self) -> tuple[dict[str, Any], ...]:
+        return DEFAULT_PROVIDER_REGISTRY.descriptors()
+
+    def create_sequence_plan(self, plan_id: str, resource: str, provider: str, template: str | None = None) -> None:
+        self._sequence_model().create_plan(plan_id, resource, provider, template); self.parsed = None
+
+    def duplicate_sequence_plan(self, plan_id: str, new_plan_id: str) -> None:
+        self._sequence_model().duplicate_plan(plan_id, new_plan_id); self.parsed = None
+
+    def delete_sequence_plan(self, plan_id: str) -> None:
+        self._sequence_model().remove_plan(plan_id); self.parsed = None
+
+    def update_sequence_plan_parameter(self, plan_id: str, name: str, patch: dict[str, Any]) -> None:
+        self._sequence_model().update_parameter(plan_id, name, patch); self.parsed = None
+
+    def update_sequence_plan_target(self, plan_id: str, alias: str, patch: dict[str, Any]) -> None:
+        self._sequence_model().update_target(plan_id, alias, patch); self.parsed = None
+
+    def select_sequence_plan_target(self, plan_id: str, alias: str, channel: str, pulse: int) -> None:
+        plan = parse_sequence_plans(self.current_config)[plan_id]
+        if plan.template is None: raise ValueError(f"Sequence plan '{plan_id}' has no template")
+        selector = build_target_selector(plan.template, channel, pulse, alias=alias)
+        selector.pop("alias", None); self.update_sequence_plan_target(plan_id, alias, selector)
+
+    def update_sequence_plan_constraints(self, plan_id: str, constraints: list[dict[str, Any]]) -> None:
+        self._sequence_model().update_constraints(plan_id, constraints); self.parsed = None
+
+    def set_sequence_plan_sampling_order(self, plan_id: str, order: list[str]) -> None:
+        self._sequence_model().set_sampling_order(plan_id, order); self.parsed = None
+
+    def estimate_sequence_plan(self, plan_id: str) -> PlanEstimate:
+        return self._sequence_model().estimate(plan_id)
+
+    def inspect_sequence_template(self, plan_id: str):
+        plan = parse_sequence_plans(self.current_config)[plan_id]
+        if plan.template is None: raise ValueError(f"Sequence plan '{plan_id}' has no template")
+        return inspect_template(plan.template)
+
+    def preview_sequence_plan(self, plan_id: str, coordinates: dict[str, Any] | None = None):
+        plan = parse_sequence_plans(self.current_config)[plan_id]
+        provider, _ = DEFAULT_PROVIDER_REGISTRY.load(plan.provider, plan.provider_version)
+        if callable(getattr(provider, "configure_plan", None)): provider.configure_plan(plan)
+        values = normalize_parameter_values(plan, provider.describe())
+        parameters = {name: items[0] for name, items in values.items()}
+        for name, value in (coordinates or {}).items():
+            internal = next((key for key, raw in plan.parameters.items() if (raw.expose_as or key) == name), name)
+            if internal not in parameters: raise KeyError(name)
+            parameters[internal] = value
+        return provider.preview_point(parameters, template=plan.template)
+
+    def compiled_sequence_workflow_preview(self) -> dict[str, Any] | None:
+        if self.parsed is None or self.parsed.sequence_preparation is None: return None
+        return deepcopy(self.parsed.sequence_preparation.compiled_config)
+
+    def _sequence_model(self) -> SequenceSweepEditorModel:
+        self._require_config()
+        assert self.config is not None
+        if self.sequence_sweep_model is None or self.sequence_sweep_model.config is not self.config:
+            self.sequence_sweep_model = SequenceSweepEditorModel.load(self.config)
+        return self.sequence_sweep_model
+
+    def start_dry_run(self, event_callback: Callable[[Event], None] | None = None) -> RunViewModel:
+        return self.start_run(event_callback=event_callback, connect_hardware=False)
+
+    def start_hardware_run(self, event_callback: Callable[[Event], None] | None = None) -> RunViewModel:
+        return self.start_run(event_callback=event_callback, connect_hardware=True)
+
+    def start_run(
+        self,
+        event_callback: Callable[[Event], None] | None = None,
+        *,
+        connect_hardware: bool = False,
+    ) -> RunViewModel:
+        parsed = self.parsed if self.parsed is not None else self._parse_current()
+        if not parsed.validation.ok:
+            messages = "; ".join(issue.message for issue in parsed.validation.errors)
+            raise ConfigValidationError(messages or "Config validation failed")
+
+        bus = EventBus()
+        store = RunStore(
+            root=self.run_root,
+            experiment_name=parsed.name,
+            config=parsed.config,
+            resolved_config=parameter_refs_to_strings(parsed.resolved_config),
+            sequence_bundles=getattr(parsed, "sequence_bundles", {}),
+            sequence_preparation=getattr(parsed, "sequence_preparation", None),
+        )
+        store.open()
+        bus.subscribe(store.handle_event)
+        if event_callback is not None:
+            bus.subscribe(event_callback)
+
+        executor = ExperimentExecutor(parsed.procedure, parsed.context, bus, dry_run=True)
+        try:
+            if connect_hardware:
+                self._connect_resources(parsed.context.resources)
+            executor.run()
+        finally:
+            try:
+                if connect_hardware:
+                    self._disconnect_resources(parsed.context.resources)
+            finally:
+                store.close(status=executor.state)
+
+        self.last_run_path = store.run_path
+        return RunViewModel(run_path=str(store.run_path), status=executor.state, event_count=len(bus.events))
+
+    def open_run_dataset(self, run_path: Path | str | None = None, backend: BackendPreference = "auto") -> DatasetModel:
+        """Open a completed run for read-only panel preview through the storage model."""
+
+        selected_run_path = Path(run_path) if run_path is not None else self.last_run_path
+        if selected_run_path is None:
+            raise RuntimeError("No run path is available yet")
+        return DatasetModel(RunReader(selected_run_path, backend=backend))
+
+    def list_run_data_keys(self, run_path: Path | str | None = None, backend: BackendPreference = "auto") -> list[str]:
+        return self.open_run_dataset(run_path, backend).list_data_keys()
+
+    def get_run_line(
+        self,
+        data_key: str,
+        x_dim: str,
+        selectors: dict[str, Any] | None = None,
+        run_path: Path | str | None = None,
+        backend: BackendPreference = "auto",
+    ) -> LineData:
+        return SliceController(self.open_run_dataset(run_path, backend)).slice_1d(data_key, x_dim, selectors or {})
+
+    def get_run_heatmap(
+        self,
+        data_key: str,
+        x_dim: str,
+        y_dim: str,
+        selectors: dict[str, Any] | None = None,
+        run_path: Path | str | None = None,
+        backend: BackendPreference = "auto",
+    ) -> HeatmapData:
+        return SliceController(self.open_run_dataset(run_path, backend)).slice_2d(
+            data_key, x_dim, y_dim, selectors or {}
+        )
+
+    def get_run_trace(
+        self,
+        data_key: str,
+        point_selectors: dict[str, Any],
+        channel: Any | None = None,
+        run_path: Path | str | None = None,
+        backend: BackendPreference = "auto",
+    ) -> TraceData:
+        return SliceController(self.open_run_dataset(run_path, backend)).get_point_trace(
+            data_key, point_selectors, channel=channel
+        )
+
+    def current_procedure_tree_config(self) -> dict[str, Any]:
+        self._require_config()
+        assert self.config is not None
+        return deepcopy(self.config)
+
+    def sequence_resource_names(self) -> list[str]:
+        self._require_config()
+        assert self.config is not None
+        resources = self.config.get("resources", {})
+        if not isinstance(resources, dict):
+            return []
+        names: list[str] = []
+        for name, resource in resources.items():
+            if not isinstance(resource, dict):
+                continue
+            capabilities = tuple(str(item) for item in resource.get("capabilities", ()))
+            adapter = str(resource.get("adapter") or "")
+            if (
+                "pulse_sequencer" in capabilities
+                or "sequence_file" in resource
+                or "sequence_params" in resource
+                or "asg" in str(name).lower()
+                or "asg" in adapter.lower()
+            ):
+                names.append(str(name))
+        return names
+
+    def get_sequence_file(self, resource_name: str = "asg") -> str:
+        self._require_config()
+        assert self.config is not None
+        resource = self._existing_resource_config(resource_name)
+        if resource is None:
+            return ""
+        return str(resource.get("sequence_file") or "")
+
+    def update_sequence_file(self, resource_name: str, sequence_file: str) -> None:
+        self._require_config()
+        assert self.config is not None
+        resource = self._resource_config(resource_name)
+        resource["sequence_file"] = sequence_file
+        self.parsed = None
+
+    def get_sequence_params(self, resource_name: str = "asg") -> dict[str, Any]:
+        self._require_config()
+        resource = self._existing_resource_config(resource_name)
+        if resource is None:
+            return {}
+        return deepcopy(resource.get("sequence_params") or {})
+
+    def update_sequence_param(self, resource_name: str, name: str, value: Any) -> None:
+        self._require_config()
+        resource = self._resource_config(resource_name)
+        params = resource.setdefault("sequence_params", {})
+        if not isinstance(params, dict):
+            raise TypeError(f"resources.{resource_name}.sequence_params must be a mapping")
+        params[name] = value
+        self.parsed = None
+
+    def inspect_sequence_resource(self, resource_name: str = "asg") -> SequenceSnapshotViewModel:
+        self._require_config()
+        resource = self._existing_resource_config(resource_name) or {}
+        info = inspect_sequence_file(resource.get("sequence_file"))
+        params = resource.get("sequence_params") if isinstance(resource.get("sequence_params"), dict) else {}
+        return SequenceSnapshotViewModel(
+            resource=resource_name,
+            sequence_file=info.path,
+            exists=info.exists,
+            mtime=info.mtime,
+            size_bytes=info.size_bytes,
+            sha256=info.sha256,
+            parameters=tuple(info.parameters),
+            channels=tuple(info.channels),
+            preview_lines=tuple(getattr(info, "preview_lines", ())),
+            sequence_params=deepcopy(params),
+            warnings=tuple(info.warnings),
+        )
+
+    def inspect_sequence_references(self) -> list[SequenceSnapshotViewModel]:
+        self._require_config()
+        assert self.config is not None
+        snapshots: list[SequenceSnapshotViewModel] = []
+        for reference in discover_sequence_references(self.config):
+            info = inspect_sequence_file(reference.sequence_file)
+            resource = self._existing_resource_config(reference.resource) or {}
+            params = resource.get("sequence_params") if isinstance(resource.get("sequence_params"), dict) else {}
+            snapshots.append(
+                SequenceSnapshotViewModel(
+                    resource=reference.resource,
+                    sequence_file=info.path,
+                    exists=info.exists,
+                    reference_id=reference.reference_id,
+                    label=reference.label,
+                    source=reference.source,
+                    mtime=info.mtime,
+                    size_bytes=info.size_bytes,
+                    sha256=info.sha256,
+                    parameters=tuple(info.parameters),
+                    channels=tuple(info.channels),
+                    preview_lines=tuple(getattr(info, "preview_lines", ())),
+                    sequence_params=deepcopy(params),
+                    warnings=tuple(info.warnings),
+                )
+            )
+        return snapshots
+
+    def workflow_tree(self):
+        self._require_config()
+        assert self.config is not None
+        return build_workflow_tree(self.config)
+
+    def update_workflow_node(self, path: WorkflowPath, patch: dict[str, Any]) -> None:
+        self._require_config()
+        assert self.config is not None
+        self.config = update_node(self.config, path, patch)
+        self.parsed = None
+
+    def add_workflow_step(self, parent_path: WorkflowPath, step: dict[str, Any]) -> None:
+        self._require_config()
+        assert self.config is not None
+        self.config = add_step(self.config, parent_path, step)
+        self.parsed = None
+
+    def delete_workflow_step(self, path: WorkflowPath) -> None:
+        self._require_config()
+        assert self.config is not None
+        self.config = delete_step(self.config, path)
+        self.parsed = None
+
+    def duplicate_workflow_step(self, path: WorkflowPath) -> None:
+        self._require_config()
+        assert self.config is not None
+        self.config = duplicate_step(self.config, path)
+        self.parsed = None
+
+    def _parse_current(self) -> ParsedExperiment:
+        self._require_config()
+        assert self.config is not None
+        try:
+            self.parsed = prepare_and_parse_experiment_config(deepcopy(self.config))
+        except SequenceGenerationError as exc:
+            raise ConfigValidationError(f"[{exc.code}] {exc}") from exc
+        return self.parsed
+
+    def _preflight_view(self, parsed: ParsedExperiment) -> PreflightViewModel:
+        resources: list[ResourceViewModel] = []
+        raw_resources = parsed.resolved_config.get("resources", {})
+        for name, resource in parsed.context.resources.items():
+            snapshot = resource.snapshot()
+            health = resource.health_check()
+            raw_config = raw_resources.get(name, {}) if isinstance(raw_resources, dict) else {}
+            resources.append(
+                ResourceViewModel(
+                    name=name,
+                    adapter=str(snapshot.get("adapter") or raw_config.get("adapter") or ""),
+                    capabilities=tuple(snapshot.get("capabilities", ())),
+                    connect_on_load=bool(raw_config.get("connect_on_load", False)),
+                    connected=bool(snapshot.get("connected", False)),
+                    simulation=bool(snapshot.get("simulation", True)),
+                    health=health,
+                    snapshot=snapshot,
+                )
+            )
+        issues = tuple(
+            PreflightIssueViewModel(issue.severity, issue.code, issue.message) for issue in parsed.validation.issues
+        )
+        sequence_snapshots = tuple(self.inspect_sequence_references())
+        return PreflightViewModel(
+            ok=parsed.validation.ok,
+            resources=tuple(resources),
+            issues=issues,
+            sequence_snapshots=sequence_snapshots,
+        )
+
+    def _resource_config(self, resource_name: str) -> dict[str, Any]:
+        self._require_config()
+        assert self.config is not None
+        resources = self.config.setdefault("resources", {})
+        if not isinstance(resources, dict):
+            raise TypeError("resources must be a mapping")
+        resource = resources.setdefault(resource_name, {})
+        if not isinstance(resource, dict):
+            raise TypeError(f"resources.{resource_name} must be a mapping")
+        return resource
+
+    def _existing_resource_config(self, resource_name: str) -> dict[str, Any] | None:
+        self._require_config()
+        assert self.config is not None
+        resources = self.config.get("resources", {})
+        if not isinstance(resources, dict):
+            raise TypeError("resources must be a mapping")
+        resource = resources.get(resource_name)
+        if resource is None:
+            return None
+        if not isinstance(resource, dict):
+            raise TypeError(f"resources.{resource_name} must be a mapping")
+        return resource
+
+    def _require_config(self) -> None:
+        if self.config is None:
+            raise RuntimeError("No experiment config loaded")
+
+    def _connect_resources(self, resources: dict[str, Any]) -> None:
+        connected: list[Any] = []
+        try:
+            for resource in resources.values():
+                if getattr(resource, "simulation", False):
+                    continue
+                resource.connect()
+                connected.append(resource)
+        except BaseException:
+            for resource in reversed(connected):
+                try:
+                    resource.disconnect()
+                except Exception:
+                    pass
+            raise
+
+    def _disconnect_resources(self, resources: dict[str, Any]) -> None:
+        first_error: BaseException | None = None
+        for resource in reversed(list(resources.values())):
+            if getattr(resource, "simulation", False):
+                continue
+            try:
+                resource.disconnect()
+            except BaseException as exc:
+                if first_error is None:
+                    first_error = exc
+        if first_error is not None:
+            raise first_error

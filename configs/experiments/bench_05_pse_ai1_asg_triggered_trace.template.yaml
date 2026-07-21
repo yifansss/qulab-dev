@@ -1,0 +1,103 @@
+schema_version: 1
+name: bench_05_pse_ai1_asg_triggered_trace
+description: >
+  PSE detector AI1 trace triggered by ASG. Connect the PSE analog output to
+  NI AI1 and ASG ch6 to NI PFI2 as AI start trigger. ASG owns point timing;
+  NI records a finite AI1 trace. Use oscilloscope to verify the trigger edge
+  and detector analog response line up.
+tags: [bench, pse, detector, ai1, asg_master, external_trigger]
+
+bench:
+  stage: 05_pse_ai1_asg_triggered_trace
+  safety: output
+  requires_allow_output: true
+  requires_allow_ao: false
+  wiring:
+    - PSE analog output -> NI Dev2/ai1.
+    - ASG ch6 -> NI Dev2/PFI2 AI start_trigger.
+    - Optional ASG laser/readout gate channel -> oscilloscope CH1.
+    - Oscilloscope CH2 on ASG ch6 trigger, CH3 on PSE analog output.
+  operator_steps:
+    - Confirm PSE AI1 dark trace with bench_01 first.
+    - Confirm ASG TTL on scope with bench_03 first.
+    - Connect ASG trigger to NI PFI2 and PSE analog output to AI1.
+    - Run this config with --allow-output.
+    - Compare AI trace start with ASG trigger on scope.
+  expected_observation:
+    - AI1 trace begins at the ASG trigger edge.
+    - PSE response should appear at expected delay relative to ASG gate/pulse.
+    - If no optical input is present, trace should show triggered dark baseline.
+
+resources:
+  asg:
+    adapter: pycontrol_asg
+    capabilities: [pulse_sequencer, trigger_source]
+    address: auto
+    simulation: false
+    pycontrol_path: drivers/pycontrol
+    sequence_file: configs/sequences/asg_ai1_trigger_smoke.json
+  daq:
+    adapter: pycontrol_ni
+    capabilities: [analog_input, trigger_receiver]
+    driver: sync
+    device: Dev2
+    simulation: false
+    pycontrol_path: drivers/pycontrol
+
+sync:
+  master: asg
+  triggers:
+    - source: asg.ch6
+      target: daq.PFI2
+      edge: rising
+      purpose: ai_start_trigger
+  order:
+    configure: [daq, asg]
+    arm: [daq, asg]
+    start: [asg]
+    read: [daq]
+
+setup:
+  - call: asg.load_sequence
+    args:
+      sequence_file: configs/sequences/asg_ai1_trigger_smoke.json
+  - call: asg.compile_sequence
+
+procedure:
+  - average:
+      name: repeat
+      count: 5
+      reducer: none
+      body:
+        - measurement:
+            name: pse_ai1_triggered_point
+            body:
+              - call: daq.configure_ai_external_trigger
+                args:
+                  channels: [ai1]
+                  sample_rate: 1000000
+                  samples: 5000
+                  start_trigger: PFI2
+                  edge: rising
+                  terminal_config: DIFF
+              - run:
+                  name: triggered_ai1_trace
+                  timeout_s: 5
+                  steps:
+                    - call: daq.arm
+                    - call: asg.arm
+                    - call: asg.start
+                    - call: daq.read
+                      save_as: pse_ai1_trace
+
+cleanup:
+  - call: asg.stop
+  - call: daq.stop
+
+plot:
+  - type: trace
+    x: time_s
+    y: pse_ai1_trace
+
+storage:
+  backends: [csv]

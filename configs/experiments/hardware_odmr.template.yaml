@@ -1,0 +1,81 @@
+schema_version: 1
+name: hardware_odmr_template
+description: Low-risk ODMR hardware template. It configures only; RF/ASG output requires explicit operator action.
+tags: [hardware_template, odmr]
+
+resources:
+  mw_drive:
+    adapter: pycontrol_lmx
+    capabilities: [microwave_source]
+    port: COM5
+    baudrate: 921600
+    output_type: RFH
+    simulation: false
+    pycontrol_path: drivers/pycontrol
+  asg:
+    adapter: pycontrol_asg
+    capabilities: [pulse_sequencer, trigger_source]
+    address: auto
+    simulation: false
+    pycontrol_path: drivers/pycontrol
+  daq:
+    adapter: pycontrol_ni
+    capabilities: [daq_counter, analog_input, analog_output, trigger_receiver]
+    device: Dev2
+    simulation: false
+    pycontrol_path: drivers/pycontrol
+
+sync:
+  master: asg
+  triggers:
+    - source: asg.ch5
+      target: daq.PFI0
+      edge: rising
+      purpose: readout_gate
+  order:
+    configure: [mw_drive, asg, daq]
+    arm: [daq, asg]
+    start: [asg]
+    read: [daq]
+
+setup:
+  - call: mw_drive.set_frequency
+    args: {freq_hz: "2.87e9"}
+  - call: mw_drive.set_power
+    args: {power_dbm: 0}
+  - call: asg.load_sequence
+    args: {sequence: odmr_readout_placeholder}
+  - call: asg.compile_sequence
+  - call: daq.configure_counter
+    args: {sample_rate: 1000000, samples: 1000, source: PFI0, trigger: asg.ch5}
+
+procedure:
+  - scan:
+      name: mw_freq_hz
+      values: {start: "2.86e9", stop: "2.88e9", points: 5}
+      body:
+        - measurement:
+            name: odmr_point_preflight
+            body:
+              - call: mw_drive.set_frequency
+                args: {freq_hz: "${mw_freq_hz}"}
+              - run:
+                  name: connect_preflight_only
+                  timeout_s: 5
+                  steps:
+                    - call: daq.arm
+                    - call: asg.arm
+                    - call: daq.read_counts
+                      save_as: counts
+
+cleanup:
+  - call: asg.stop
+  - call: daq.stop
+  - call: mw_drive.output_off
+
+plot:
+  - type: line
+    x: mw_freq_hz
+    y: counts
+
+storage: {}

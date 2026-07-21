@@ -1,0 +1,118 @@
+schema_version: 1
+name: bench_09_low_power_odmr_pse_ai1_plan
+description: >
+  Low-power ODMR integration plan using MW frequency scan, ASG point timing,
+  and PSE detector AI1 traces. This config intentionally does not call
+  mw_drive.output_on; RF enabling should be performed only through a later
+  explicit authorized control path after attenuation and sample safety review.
+  ASG start still requires output authorization.
+tags: [bench, odmr, mw_scan, asg_master, pse, ai1, integration]
+
+bench:
+  stage: 09_low_power_odmr_pse_ai1_plan
+  safety: output_without_rf_enable
+  requires_allow_output: true
+  requires_allow_ao: false
+  wiring:
+    - MW output path connected through verified attenuation/load; RF output remains off in this config.
+    - ASG laser/readout gate channels connected only after scope verification.
+    - ASG ch6 -> NI Dev2/PFI2 AI start_trigger.
+    - PSE analog output -> NI Dev2/ai1.
+    - Oscilloscope on ASG trigger and PSE analog output during first run.
+  operator_steps:
+    - Complete bench_01, bench_03, bench_05, and bench_08 first.
+    - Verify microwave attenuation, laser safety, detector protection, and cleanup actions.
+    - Run this config with --allow-output for ASG timing only; RF output is not enabled here.
+    - Enable RF only via an explicitly reviewed manual/direct-control step in a future test.
+  expected_observation:
+    - MW frequency commands step through the scan.
+    - ASG trigger starts each AI1 trace.
+    - PSE trace is stored per mw_freq_hz point.
+    - No RF output should turn on from this config alone.
+
+resources:
+  mw_drive:
+    adapter: pycontrol_lmx
+    capabilities: [microwave_source]
+    port: COM5
+    baudrate: 921600
+    output_type: RFH
+    simulation: false
+    pycontrol_path: drivers/pycontrol
+  asg:
+    adapter: pycontrol_asg
+    capabilities: [pulse_sequencer, trigger_source]
+    address: auto
+    simulation: false
+    pycontrol_path: drivers/pycontrol
+    sequence_file: configs/sequences/asg_ai1_trigger_smoke.json
+  daq:
+    adapter: pycontrol_ni
+    capabilities: [analog_input, trigger_receiver]
+    driver: sync
+    device: Dev2
+    simulation: false
+    pycontrol_path: drivers/pycontrol
+
+sync:
+  master: asg
+  triggers:
+    - source: asg.ch6
+      target: daq.PFI2
+      edge: rising
+      purpose: ai_start_trigger
+  order:
+    configure: [mw_drive, daq, asg]
+    arm: [daq, asg]
+    start: [asg]
+    read: [daq]
+
+setup:
+  - call: mw_drive.set_power
+    args: {power_dbm: -30}
+  - call: asg.load_sequence
+    args:
+      sequence_file: configs/sequences/asg_ai1_trigger_smoke.json
+  - call: asg.compile_sequence
+
+procedure:
+  - scan:
+      name: mw_freq_hz
+      values: {start: "2.865e9", stop: "2.875e9", points: 11}
+      body:
+        - measurement:
+            name: odmr_pse_ai1_point
+            body:
+              - call: mw_drive.set_frequency
+                args: {freq_hz: "${mw_freq_hz}"}
+              - call: daq.configure_ai_external_trigger
+                args:
+                  channels: [ai1]
+                  sample_rate: 1000000
+                  samples: 5000
+                  start_trigger: PFI2
+                  edge: rising
+                  terminal_config: DIFF
+              - run:
+                  name: odmr_triggered_trace
+                  timeout_s: 5
+                  steps:
+                    - call: daq.arm
+                    - call: asg.arm
+                    - call: asg.start
+                    - call: daq.read
+                      save_as: pse_ai1_trace
+
+cleanup:
+  - call: asg.stop
+  - call: daq.stop
+  - call: mw_drive.output_off
+
+plot:
+  - type: heatmap
+    x: mw_freq_hz
+    y: time_s
+    z: pse_ai1_trace
+
+storage:
+  backends: [csv]

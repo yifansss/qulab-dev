@@ -1,0 +1,60 @@
+schema_version: 1
+name: hardware_asg_master_counter
+description: Template for ASG-master APD counter readout with NI sync driver.
+tags: [hardware, ni_sync, asg_master, counter]
+
+resources:
+  asg:
+    adapter: pycontrol_asg
+    capabilities: [pulse_sequencer, trigger_source]
+    address: auto
+    pycontrol_path: drivers/pycontrol
+  daq:
+    adapter: pycontrol_ni
+    capabilities: [daq_counter, trigger_receiver]
+    driver: sync
+    device: Dev2
+    pycontrol_path: drivers/pycontrol
+
+sync:
+  master: asg
+  triggers:
+    - source: asg.ch5
+      target: daq.PFI1
+      edge: rising
+      purpose: counter_sample_clock
+    - source: asg.ch6
+      target: daq.PFI2
+      edge: rising
+      purpose: counter_start_trigger
+  order:
+    configure: [daq, asg]
+    arm: [daq, asg]
+    start: [asg]
+    read: [daq]
+
+procedure:
+  - measurement:
+      name: asg_master_counter_point
+      body:
+        - call: daq.configure_counter_external_clock
+          args:
+            counter_channel: ctr0
+            count_source: PFI0
+            sample_clock: PFI1
+            start_trigger: PFI2
+            samples: 1000
+            sample_rate: 1000000
+        - run:
+            name: readout
+            timeout_s: 5
+            steps:
+              - call: daq.arm
+              - call: asg.arm
+              - call: asg.start
+              - call: daq.read
+                save_as: counts
+
+cleanup:
+  - call: asg.stop
+  - call: daq.stop

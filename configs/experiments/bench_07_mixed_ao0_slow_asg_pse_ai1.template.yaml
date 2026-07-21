@@ -1,0 +1,109 @@
+schema_version: 1
+name: bench_07_mixed_ao0_slow_asg_pse_ai1
+description: >
+  Mixed-mode integration test. NI AO0 sets a slow voltage, waits for settling,
+  then ASG triggers a finite NI AI1 trace of the PSE detector. Use this to test
+  slow scan plus point-level ASG timing and per-point fast trace storage.
+tags: [bench, mixed, ao, asg_master, pse, ai1, trace]
+
+bench:
+  stage: 07_mixed_ao0_slow_asg_pse_ai1
+  safety: output_and_analog_output
+  requires_allow_output: true
+  requires_allow_ao: true
+  wiring:
+    - NI Dev2/ao0 -> safe slow-control input or loopback target.
+    - PSE analog output -> NI Dev2/ai1.
+    - ASG ch6 -> NI Dev2/PFI2 AI start_trigger.
+    - Oscilloscope CH1 on AO0, CH2 on ASG ch6, CH3 on PSE analog output.
+  operator_steps:
+    - Verify bench_02 AO0/AI1 loopback before connecting AO0 to any device.
+    - Verify bench_05 ASG-triggered PSE trace before enabling mixed scan.
+    - Run with both --allow-output and --allow-ao only after wiring review.
+    - Check that AO0 changes slowly, then each point produces an ASG-triggered AI1 trace.
+  expected_observation:
+    - AO0 shows slow steps on the oscilloscope.
+    - ASG trigger occurs once per measurement point after settle_time.
+    - AI1 trace starts on ASG trigger and is indexed by ao_voltage.
+
+resources:
+  asg:
+    adapter: pycontrol_asg
+    capabilities: [pulse_sequencer, trigger_source]
+    address: auto
+    simulation: false
+    pycontrol_path: drivers/pycontrol
+    sequence_file: configs/sequences/asg_ai1_trigger_smoke.json
+  daq:
+    adapter: pycontrol_ni
+    capabilities: [analog_output, analog_input, trigger_receiver]
+    driver: sync
+    device: Dev2
+    simulation: false
+    pycontrol_path: drivers/pycontrol
+
+sync:
+  master: asg
+  triggers:
+    - source: asg.ch6
+      target: daq.PFI2
+      edge: rising
+      purpose: ai_start_trigger
+  order:
+    configure: [daq, asg]
+    arm: [daq, asg]
+    start: [asg]
+    read: [daq]
+
+setup:
+  - call: asg.load_sequence
+    args:
+      sequence_file: configs/sequences/asg_ai1_trigger_smoke.json
+  - call: asg.compile_sequence
+
+procedure:
+  - scan:
+      name: ao_voltage
+      values: {start: -0.05, stop: 0.05, points: 3}
+      body:
+        - measurement:
+            name: mixed_ao_asg_pse_point
+            body:
+              - call: daq.set_ao_static
+                args:
+                  channel: ao0
+                  voltage: ${ao_voltage}
+              - call: daq.wait_settle
+                args: {seconds: 0.02}
+              - call: daq.configure_ai_external_trigger
+                args:
+                  channels: [ai1]
+                  sample_rate: 1000000
+                  samples: 5000
+                  start_trigger: PFI2
+                  edge: rising
+                  terminal_config: DIFF
+              - run:
+                  name: mixed_triggered_trace
+                  timeout_s: 5
+                  steps:
+                    - call: daq.arm
+                    - call: asg.arm
+                    - call: asg.start
+                    - call: daq.read
+                      save_as: pse_ai1_trace
+
+cleanup:
+  - call: daq.set_ao_static
+    args: {channel: ao0, voltage: 0.0}
+  - call: asg.stop
+  - call: daq.stop
+
+plot:
+  - type: heatmap
+    x: ao_voltage
+    y: time_s
+    z: pse_ai1_trace
+
+storage:
+  backends: [csv]

@@ -1,0 +1,66 @@
+schema_version: 1
+name: bench_03_asg_ttl_scope_smoke
+description: >
+  ASG-only TTL smoke test for oscilloscope observation. Load a short sequence
+  and start ASG so the operator can verify ASG output levels, timing, channel
+  mapping, and trigger polarity on the oscilloscope. Requires explicit output
+  authorization.
+tags: [bench, asg, ttl, oscilloscope, output]
+
+bench:
+  stage: 03_asg_ttl_scope
+  safety: output
+  requires_allow_output: true
+  requires_allow_ao: false
+  wiring:
+    - ASG ch1 preview gate -> oscilloscope CH1.
+    - ASG ch6 NI start-trigger gate -> oscilloscope CH2.
+    - Do not connect ASG outputs to laser/MW switches until TTL polarity and levels are verified.
+  operator_steps:
+    - Confirm ASG outputs are connected only to oscilloscope or safe dummy inputs.
+    - Run with --allow-output only after checking all channels.
+    - Verify pulse widths, relative delays, repetition, polarity, and voltage levels.
+  expected_observation:
+    - Oscilloscope should show the selected sequence pulses.
+    - No NI data is required for this test.
+
+resources:
+  asg:
+    adapter: pycontrol_asg
+    capabilities: [pulse_sequencer, trigger_source]
+    address: auto
+    simulation: false
+    pycontrol_path: drivers/pycontrol
+    sequence_file: configs/sequences/asg_ai1_trigger_smoke.json
+
+sync:
+  master: asg
+  triggers: []
+  order:
+    configure: [asg]
+    arm: [asg]
+    start: [asg]
+    read: []
+
+setup:
+  - call: asg.load_sequence
+    args:
+      sequence_file: configs/sequences/asg_ai1_trigger_smoke.json
+  - call: asg.compile_sequence
+
+procedure:
+  - measurement:
+      name: asg_ttl_scope_point
+      body:
+        - run:
+            name: asg_scope_output
+            timeout_s: 5
+            steps:
+              - call: asg.arm
+              - call: asg.start
+
+cleanup:
+  - call: asg.stop
+
+storage:
+  backends: [csv]

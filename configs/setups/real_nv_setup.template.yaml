@@ -1,0 +1,58 @@
+schema_version: 1
+name: real_nv_setup_template
+description: Template for real NV bench hardware. Copy before use and edit ports/devices.
+tags: [hardware_template, nv]
+
+resources:
+  mw_drive:
+    adapter: pycontrol_lmx
+    capabilities: [microwave_source]
+    port: COM5
+    baudrate: 921600
+    output_type: RFH
+    simulation: false
+    pycontrol_path: drivers/pycontrol
+
+  asg:
+    adapter: pycontrol_asg
+    capabilities: [pulse_sequencer, trigger_source]
+    address: auto
+    simulation: false
+    pycontrol_path: drivers/pycontrol
+
+  daq:
+    adapter: pycontrol_ni
+    capabilities: [daq_counter, analog_input, analog_output, trigger_receiver]
+    device: Dev2
+    simulation: false
+    pycontrol_path: drivers/pycontrol
+
+  awg:
+    adapter: pycontrol_awg
+    capabilities: [waveform_generator, trigger_receiver]
+    address: TCPIP0::192.168.31.193::inst0::INSTR
+    simulation: false
+    pycontrol_path: drivers/pycontrol
+
+sync:
+  master: asg
+  triggers:
+    - source: asg.ch5
+      target: daq.PFI0
+      edge: rising
+      purpose: readout_gate
+  order:
+    configure: [mw_drive, asg, daq]
+    arm: [daq, asg]
+    start: [asg]
+    read: [daq]
+
+setup: []
+procedure: []
+cleanup:
+  - call: asg.stop
+  - call: daq.stop
+  - call: mw_drive.output_off
+  - call: awg.stop
+
+storage: {}

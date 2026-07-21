@@ -1,0 +1,70 @@
+schema_version: 1
+name: bench_08_mw_lmx_config_no_rf
+description: >
+  Microwave source configuration-only test. This sets frequency and power values
+  but intentionally does not call output_on. Use the microwave source display,
+  serial logs, or a spectrum analyzer with RF output still disabled to verify
+  command path before enabling RF in a later manually authorized test.
+tags: [bench, mw, lmx, configure_only, no_rf]
+
+bench:
+  stage: 08_mw_config_no_rf
+  safety: configure_no_output
+  requires_allow_output: false
+  requires_allow_ao: false
+  wiring:
+    - Keep MW RF output disconnected or terminated as appropriate.
+    - Do not enable RF output in this config.
+  operator_steps:
+    - Confirm COM port and output_type are correct.
+    - Run connect-only first.
+    - Run this config only to set frequency/power values.
+    - Verify source front panel/state if available.
+  expected_observation:
+    - MW source accepts frequency/power commands.
+    - RF output remains off because output_on is not called.
+
+resources:
+  mw_drive:
+    adapter: pycontrol_lmx
+    capabilities: [microwave_source]
+    port: COM5
+    baudrate: 921600
+    output_type: RFH
+    simulation: false
+    pycontrol_path: drivers/pycontrol
+
+sync:
+  master: mw_drive
+  triggers: []
+  order:
+    configure: [mw_drive]
+    arm: []
+    start: []
+    read: []
+
+setup:
+  - call: mw_drive.set_frequency
+    args: {freq_hz: "2.87e9"}
+  - call: mw_drive.set_power
+    args: {power_dbm: -20}
+
+procedure:
+  - scan:
+      name: mw_freq_hz
+      values: {start: "2.86e9", stop: "2.88e9", points: 5}
+      body:
+        - measurement:
+            name: mw_config_point_no_rf
+            body:
+              - call: mw_drive.set_frequency
+                args: {freq_hz: "${mw_freq_hz}"}
+              - wait:
+                  duration_s: 0.05
+                  reason: "Allow source display/state to update."
+
+cleanup:
+  - call: mw_drive.output_off
+
+storage:
+  backends: [csv]

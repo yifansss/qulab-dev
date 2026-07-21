@@ -1,0 +1,78 @@
+schema_version: 1
+name: bench_00_inventory_connect
+description: >
+  Stage 00 safe bench inventory. Parse/preflight resources and optionally run
+  connect-only health/snapshot checks. This config has no procedure output,
+  no ASG start, no MW output_on, and no NI AO write.
+tags: [bench, hardware, safe, connect_only]
+
+bench:
+  stage: 00_inventory_connect
+  safety: connect_only
+  requires_allow_output: false
+  requires_allow_ao: false
+  operator_steps:
+    - Copy this template and edit COM ports, NI device name, ASG address, and AWG VISA address.
+    - Run hardware_check --dry-run first.
+    - Run hardware_check --connect-only only after all instruments are powered and idle.
+  expected_observation:
+    - No signal should appear on the oscilloscope.
+    - No microwave RF output should turn on.
+    - No ASG/AWG output should start.
+
+resources:
+  mw_drive:
+    adapter: pycontrol_lmx
+    capabilities: [microwave_source]
+    port: COM5
+    baudrate: 921600
+    output_type: RFH
+    simulation: false
+    pycontrol_path: drivers/pycontrol
+
+  asg:
+    adapter: pycontrol_asg
+    capabilities: [pulse_sequencer, trigger_source]
+    address: auto
+    simulation: false
+    pycontrol_path: drivers/pycontrol
+    sequence_file: configs/sequences/operator_sequence.json
+
+  daq:
+    adapter: pycontrol_ni
+    capabilities: [daq_counter, analog_input, analog_output, trigger_receiver]
+    driver: sync
+    device: Dev2
+    simulation: false
+    pycontrol_path: drivers/pycontrol
+
+  awg:
+    adapter: pycontrol_awg
+    capabilities: [waveform_generator, trigger_receiver]
+    address: TCPIP0::192.168.31.193::inst0::INSTR
+    simulation: false
+    pycontrol_path: drivers/pycontrol
+
+sync:
+  master: asg
+  triggers:
+    - source: asg.ch5
+      target: daq.PFI2
+      edge: rising
+      purpose: future_ai_start_trigger
+  order:
+    configure: [mw_drive, asg, daq, awg]
+    arm: [daq, asg]
+    start: [asg]
+    read: [daq]
+
+setup: []
+procedure: []
+cleanup:
+  - call: asg.stop
+  - call: daq.stop
+  - call: mw_drive.output_off
+  - call: awg.stop
+
+storage:
+  backends: [csv]

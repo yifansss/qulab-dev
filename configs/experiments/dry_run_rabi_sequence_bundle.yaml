@@ -1,0 +1,74 @@
+schema_version: 1
+name: dry_run_rabi_sequence_bundle
+description: Three-point hardware-free Rabi scan using a concrete sequence bundle.
+tags: [rabi, sequence_bundle, dry_run]
+
+resources:
+  asg:
+    adapter: mock_asg
+    capabilities: [pulse_sequencer, trigger_source]
+  daq:
+    adapter: mock_daq
+    capabilities: [daq_counter, trigger_receiver]
+
+sequence_bundles:
+  rabi_tau:
+    manifest: configs/sequences/examples/rabi_tau_bundle/manifest.yaml
+    resource: asg
+    match:
+      mode: exact
+
+sync:
+  master: asg
+  triggers:
+    - source: asg.ch6
+      target: daq.PFI0
+      edge: rising
+      purpose: daq_start_trigger
+  order:
+    configure: [daq, asg]
+    arm: [daq, asg]
+    start: [asg]
+    read: [daq]
+
+setup:
+  - call: daq.configure_counter
+    args:
+      sample_rate: 1.0e6
+      samples: 16
+      trigger: PFI0
+
+procedure:
+  - scan:
+      name: tau_s
+      values: [20e-9, 40e-9, 60e-9]
+      body:
+        - measurement:
+            name: rabi_point
+            body:
+              - call: asg.load_sequence_from_bundle
+                args:
+                  bundle: rabi_tau
+                  coordinates:
+                    tau_s: "${tau_s}"
+              - call: asg.compile_sequence
+              - run:
+                  name: pulse_readout
+                  steps:
+                    - call: daq.arm
+                    - call: asg.arm
+                    - call: asg.start
+                    - call: daq.read_counts
+                      save_as: counts
+
+cleanup:
+  - call: asg.stop
+  - call: daq.stop
+
+plot:
+  - type: line
+    x: tau_s
+    y: counts
+
+storage:
+  backend: csv

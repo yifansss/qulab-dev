@@ -1,0 +1,80 @@
+schema_version: 1
+name: dry_run_rabi
+description: Hardware-free Rabi dry-run using mock resources.
+tags: [dry_run, rabi]
+
+resources:
+  mw:
+    adapter: mock_microwave
+    capabilities: [microwave_source]
+    connect_on_load: true
+    frequency_hz: "2.87e9"
+    power_dbm: -10
+  asg:
+    adapter: mock_asg
+    capabilities: [pulse_sequencer, trigger_source]
+    connect_on_load: true
+  daq:
+    adapter: mock_daq
+    capabilities: [daq_counter, analog_input, trigger_receiver]
+    connect_on_load: true
+
+sync:
+  master: asg
+  triggers:
+    - source: asg.ch5
+      target: daq.PFI0
+      edge: rising
+      purpose: readout_gate
+  order:
+    configure: [mw, asg, daq]
+    arm: [daq, asg]
+    start: [asg]
+    read: [daq]
+
+setup:
+  - call: mw.set_frequency
+    args: {freq_hz: "2.87e9"}
+  - call: mw.set_power
+    args: {power_dbm: -10}
+  - call: mw.output_on
+  - call: asg.load_sequence
+  - call: asg.compile_sequence
+  - call: daq.configure_counter
+    args: {sample_rate: 1000000, samples: 1000, source: ctr0, trigger: PFI0}
+
+procedure:
+  - scan:
+      name: tau_s
+      values: {start: "2.0e-8", stop: "1.0e-7", points: 5}
+      body:
+        - measurement:
+            name: rabi_point
+            body:
+              - call: asg.set_sequence_param
+                args: {name: tau_s, value: "${tau_s}"}
+              - average:
+                  name: avg
+                  count: 2
+                  body:
+                    - run:
+                        name: readout
+                        timeout_s: 5
+                        steps:
+                          - call: daq.arm
+                          - call: asg.arm
+                          - call: asg.start
+                          - call: daq.read_counts
+                            save_as: counts
+
+cleanup:
+  - call: asg.stop
+  - call: daq.stop
+  - call: mw.output_off
+
+plot:
+  - type: line
+    x: tau_s
+    y: counts
+
+storage: {}

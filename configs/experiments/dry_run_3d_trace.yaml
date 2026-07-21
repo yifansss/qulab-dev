@@ -1,0 +1,92 @@
+schema_version: 1
+name: dry_run_3d_trace
+description: 3D dry-run scan that stores a 1000-sample time trace at each measurement point.
+tags: [dry_run, multidim, trace]
+
+resources:
+  aio:
+    adapter: mock_analog_io
+    capabilities: [analog_output]
+    connect_on_load: true
+  mw:
+    adapter: mock_microwave
+    capabilities: [microwave_source]
+    connect_on_load: true
+    power_dbm: -10
+  asg:
+    adapter: mock_asg
+    capabilities: [pulse_sequencer, trigger_source]
+    connect_on_load: true
+  daq:
+    adapter: mock_daq
+    capabilities: [daq_counter, trigger_receiver]
+    connect_on_load: true
+
+sync:
+  master: asg
+  triggers:
+    - source: asg.ch5
+      target: daq.PFI0
+      edge: rising
+      purpose: readout_gate
+  order:
+    configure: [aio, mw, asg, daq]
+    arm: [daq, asg]
+    start: [asg]
+    read: [daq]
+
+setup:
+  - call: mw.set_power
+    args: {power_dbm: -10}
+  - call: mw.output_on
+  - call: daq.configure_counter
+    args: {sample_rate: 1000000, samples: 1000, source: ctr0, trigger: PFI0}
+
+procedure:
+  - scan:
+      name: ao_v
+      values: [0.0, 0.5]
+      body:
+        - call: aio.set_voltage
+          args: {channel: ao0, voltage: "${ao_v}"}
+        - scan:
+            name: rf_freq_hz
+            values: {start: "2.860e9", stop: "2.862e9", points: 2}
+            body:
+              - call: mw.set_frequency
+                args: {freq_hz: "${rf_freq_hz}"}
+              - scan:
+                  name: tau_s
+                  values: ["2.0e-8", "4.0e-8"]
+                  body:
+                    - measurement:
+                        name: trace_point
+                        body:
+                          - call: asg.set_sequence_param
+                            args: {name: tau_s, value: "${tau_s}"}
+                          - wait:
+                              name: settle
+                              duration_s: 0.001
+                          - run:
+                              name: acquire_trace
+                              timeout_s: 5
+                              steps:
+                                - call: daq.arm
+                                - call: asg.arm
+                                - call: asg.start
+                                - call: daq.read_counts_trace
+                                  args: {bins: 1000}
+                                  save_as: readout
+
+cleanup:
+  - call: asg.stop
+  - call: daq.stop
+  - call: mw.output_off
+
+plot:
+  - type: trace
+    x: time_s
+    y: photon_bins
+
+storage:
+  backends: [csv]

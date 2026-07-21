@@ -1,0 +1,26 @@
+schema_version: 1
+name: bench_11_generated_rabi_asg_ni
+description: Stage 3 template reusing Bench05 ASG ch6 to NI PFI0 trigger ordering.
+safety: {template_only: true, requires_allow_output: true, physically_verified: false}
+resources:
+  asg: {adapter: pycontrol_asg, capabilities: [pulse_sequencer, trigger_source], simulation: false, pycontrol_path: drivers/pycontrol}
+  daq: {adapter: pycontrol_ni, capabilities: [daq_counter, trigger_receiver], simulation: false, pycontrol_path: drivers/pycontrol, device: CHANGE_ME}
+sequence_plans:
+  rabi_triggered:
+    resource: asg
+    family: {provider: rabi, version: "2"}
+    parameters: {tau_s: {mode: explicit, values: [20.0e-9, 60.0e-9, 100.0e-9], unit: s}}
+    sampling: {mode: cartesian, order: [tau_s]}
+    materialize: {cache: true, max_points: 5}
+sync:
+  master: asg
+  triggers: [{source: asg.ch6, target: daq.PFI0, edge: rising, purpose: daq_start_trigger}]
+  order: {configure: [daq, asg], arm: [daq, asg], start: [asg], read: [daq]}
+procedure:
+  - sequence_sweep:
+      plan: rabi_triggered
+      body:
+        - measurement:
+            name: triggered_point
+            body: [{call: asg.compile_sequence}, {call: daq.arm}, {call: asg.arm}, {call: asg.start}, {call: daq.read_counts, save_as: counts}]
+cleanup: [{call: asg.stop}, {call: daq.stop}]

@@ -1,0 +1,2 @@
+"""Instrument-specific GUI panels."""
+

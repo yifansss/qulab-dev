@@ -1,0 +1,78 @@
+schema_version: 1
+name: bench_06_pse_ai1_manual_slow_scan
+description: >
+  Manual slow-condition scan for PSE AI1. Qulab does not change hardware output;
+  the operator manually changes an external condition at each label and records
+  repeated AI1 traces. Use this to verify storage/viewer behavior for detector
+  traces before enabling ASG/MW/AO outputs.
+tags: [bench, pse, detector, ai1, manual_scan, read_only]
+
+bench:
+  stage: 06_pse_ai1_manual_slow_scan
+  safety: read_only
+  requires_allow_output: false
+  requires_allow_ao: false
+  wiring:
+    - PSE analog output -> NI Dev2/ai1.
+    - Optional oscilloscope CH1 on PSE analog output.
+  operator_steps:
+    - At each manual_condition value, adjust the external condition by hand.
+    - Examples: detector blocked/unblocked, room light off/on, safe test LED low/high.
+    - Qulab only records AI1 traces; it does not drive outputs.
+  expected_observation:
+    - Viewer should show trace per manual condition.
+    - Trace amplitude should follow the manually changed condition.
+
+resources:
+  daq:
+    adapter: pycontrol_ni
+    capabilities: [analog_input]
+    driver: sync
+    device: Dev2
+    simulation: false
+    pycontrol_path: drivers/pycontrol
+
+sync:
+  master: daq
+  triggers: []
+  order:
+    configure: [daq]
+    arm: [daq]
+    start: [daq]
+    read: [daq]
+
+procedure:
+  - scan:
+      name: manual_condition
+      values: [dark, dim, bright]
+      body:
+        - measurement:
+            name: pse_ai1_manual_condition
+            body:
+              - wait:
+                  duration_s: 2.0
+                  reason: "Operator sets manual_condition before trace acquisition."
+              - call: daq.configure_ai
+                args:
+                  channels: [ai1]
+                  sample_rate: 100000
+                  samples: 2000
+                  terminal_config: DIFF
+              - run:
+                  name: ai1_trace
+                  timeout_s: 5
+                  steps:
+                    - call: daq.arm
+                    - call: daq.read_analog
+                      save_as: pse_ai1_trace
+
+cleanup:
+  - call: daq.stop
+
+plot:
+  - type: trace
+    x: time_s
+    y: pse_ai1_trace
+
+storage:
+  backends: [csv]

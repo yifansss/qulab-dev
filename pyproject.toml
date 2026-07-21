@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qulab"
+version = "0.0.0"
+description = "Lightweight experiment orchestration framework for NV and quantum sensing labs"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+storage = [
+    "h5py>=3.10",
+    "zarr>=2.16",
+]
+gui = [
+    "matplotlib>=3.8",
+    "pyqtgraph>=0.13",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+    "hardware: tests that require physical lab hardware",
+]

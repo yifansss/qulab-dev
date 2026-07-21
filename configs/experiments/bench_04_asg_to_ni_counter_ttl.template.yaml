@@ -1,0 +1,100 @@
+schema_version: 1
+name: bench_04_asg_to_ni_counter_ttl
+description: >
+  ASG-to-NI counter TTL routing test. Use ASG TTL as the NI counter sample clock
+  and optional start trigger while a TTL source or detector TTL output feeds
+  NI PFI0. This verifies ASG->NI PFI cabling, counter source routing, bin count
+  shape, trigger polarity, and ASG master arm/start/read order.
+tags: [bench, asg, ni, counter, pfi, asg_master]
+
+bench:
+  stage: 04_asg_to_ni_counter_ttl
+  safety: output
+  requires_allow_output: true
+  requires_allow_ao: false
+  wiring:
+    - Detector/APD TTL or test TTL source -> NI Dev2/PFI0 count_source.
+    - ASG ch5 -> NI Dev2/PFI1 counter sample_clock.
+    - ASG ch6 -> NI Dev2/PFI2 optional start_trigger.
+    - Oscilloscope CH1 on ASG ch5, CH2 on ASG ch6, CH3 on detector/test TTL.
+  operator_steps:
+    - First run bench_03_asg_ttl_scope_smoke with ASG connected only to scope.
+    - Then connect ASG ch5/ch6 to NI PFI inputs.
+    - Run this config with --allow-output.
+    - Check that count bins appear only when sample clock edges are present.
+  expected_observation:
+    - Scope confirms ASG sample clock/start trigger reach NI PFI.
+    - Qulab data contains binned counts or a structured counter result.
+
+resources:
+  asg:
+    adapter: pycontrol_asg
+    capabilities: [pulse_sequencer, trigger_source]
+    address: auto
+    simulation: false
+    pycontrol_path: drivers/pycontrol
+    sequence_file: configs/sequences/asg_ai1_trigger_smoke.json
+  daq:
+    adapter: pycontrol_ni
+    capabilities: [daq_counter, trigger_receiver]
+    driver: sync
+    device: Dev2
+    simulation: false
+    pycontrol_path: drivers/pycontrol
+
+sync:
+  master: asg
+  triggers:
+    - source: asg.ch5
+      target: daq.PFI1
+      edge: rising
+      purpose: counter_sample_clock
+    - source: asg.ch6
+      target: daq.PFI2
+      edge: rising
+      purpose: counter_start_trigger
+  order:
+    configure: [daq, asg]
+    arm: [daq, asg]
+    start: [asg]
+    read: [daq]
+
+setup:
+  - call: asg.load_sequence
+    args:
+      sequence_file: configs/sequences/asg_ai1_trigger_smoke.json
+  - call: asg.compile_sequence
+
+procedure:
+  - measurement:
+      name: asg_master_counter_point
+      body:
+        - call: daq.configure_counter_external_clock
+          args:
+            counter_channel: ctr0
+            count_source: PFI0
+            sample_clock: PFI1
+            start_trigger: PFI2
+            samples: 1000
+            sample_rate: 1000000
+        - run:
+            name: counter_bins
+            timeout_s: 5
+            steps:
+              - call: daq.arm
+              - call: asg.arm
+              - call: asg.start
+              - call: daq.read
+                save_as: counter_bins
+
+cleanup:
+  - call: asg.stop
+  - call: daq.stop
+
+plot:
+  - type: trace
+    x: time_s
+    y: counter_bins
+
+storage:
+  backends: [csv]

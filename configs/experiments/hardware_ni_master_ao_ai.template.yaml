@@ -1,0 +1,44 @@
+schema_version: 1
+name: hardware_ni_master_ao_ai
+description: Template for NI-master slow AO setpoints with high-rate AI traces.
+tags: [hardware, ni_sync, ni_master, ao_ai]
+
+resources:
+  daq:
+    adapter: pycontrol_ni
+    capabilities: [analog_input, analog_output, trigger_receiver]
+    driver: sync
+    device: Dev2
+    pycontrol_path: drivers/pycontrol
+
+sync:
+  master: daq
+  triggers: []
+  order:
+    configure: [daq]
+    arm: [daq]
+    start: [daq]
+    read: [daq]
+
+procedure:
+  - measurement:
+      name: ni_master_ao_ai_sweep
+      body:
+        - call: daq.configure_ao_ai_step_and_sample
+          args:
+            ao_channels: [ao0]
+            ai_channels: [ai0, ai1]
+            ao_waveform: [[-0.1, 0.0, 0.1]]
+            ai_rate: 100000
+            ai_samples_per_ao_point: 200
+            settle_time: 0.002
+        - run:
+            name: ao_ai_readout
+            timeout_s: 10
+            steps:
+              - call: daq.arm
+              - call: daq.read
+                save_as: ao_ai_traces
+
+cleanup:
+  - call: daq.stop
