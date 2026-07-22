@@ -51,7 +51,7 @@ from .live_plot_model import LivePlotModel, LivePlotSelection
 from .analysis_status_model import AnalysisStatusModel
 from .sequence_context_model import SequenceContextModel
 from .workflow_composer import WorkflowComposerModel
-from .sequence_authoring import SequenceAuthoringModel
+from .sequence_authoring import SequenceAuthoringModel, normalized_sequence_file_preview
 from .sequence_authoring_presenter import GuidedSequenceViewState, SequenceAuthoringPresenter
 
 
@@ -76,6 +76,9 @@ class OperatorController:
         self._sequence_authoring: SequenceAuthoringModel | None = None
         self._sequence_prepared_revisions: dict[str, str] = {}
         self._live_lock = RLock()
+        self._run_lock = RLock()
+        self._active_executor: ExperimentExecutor | None = None
+        self._active_resources: dict[str, Any] = {}
         self.live_catalog = LiveDataCatalog()
         self.live_buffer = LivePointBuffer()
         self.live_plot_model = LivePlotModel(self.live_catalog, self.live_buffer)
@@ -300,7 +303,13 @@ class OperatorController:
         )
         store.open()
         bus.subscribe(store.handle_event)
-        executor = ExperimentExecutor(parsed.procedure, parsed.context, bus, dry_run=True)
+        executor = ExperimentExecutor(parsed.procedure, parsed.context, bus, dry_run=not connect_hardware)
+        with self._run_lock:
+            if self._active_executor is not None:
+                store.close(status="failed")
+                raise RuntimeError("An experiment run is already active")
+            self._active_executor = executor
+            self._active_resources = dict(parsed.context.resources)
         analysis_plan = getattr(parsed, "analysis_plan", None)
         engine = create_live_compute_engine(analysis_plan, None, bus) if analysis_plan is not None else None
         try:
@@ -331,11 +340,34 @@ class OperatorController:
                         store.set_analysis_summary(engine.summary())
                 finally:
                     store.close(status="failed" if close_error is not None else (executor.state if executor.state != "created" else "failed"))
-                if close_error is not None:
-                    raise close_error
+                try:
+                    if close_error is not None:
+                        raise close_error
+                finally:
+                    with self._run_lock:
+                        if self._active_executor is executor:
+                            self._active_executor = None
+                            self._active_resources = {}
 
         self.last_run_path = store.run_path
         return RunViewModel(run_path=str(store.run_path), status=executor.state, event_count=len(bus.events))
+
+    def stop_run(self) -> bool:
+        """Cancel the active executor and stop hardware to unblock pending reads."""
+        with self._run_lock:
+            executor = self._active_executor
+            resources = tuple(self._active_resources.values())
+        if executor is None:
+            return False
+        executor.request_stop()
+        for resource in resources:
+            stop = getattr(resource, "stop", None)
+            if callable(stop):
+                try:
+                    stop()
+                except Exception:
+                    pass
+        return True
 
     def reset_live_state(self, max_points: int = 1000) -> None:
         parsed = self.parsed
@@ -649,6 +681,37 @@ class OperatorController:
             "provider_identity": f"artifacts/sequence_generation/{plan_id}/provider_identity.json",
         }
         return result
+
+    def list_sequence_bundle_summaries(self) -> tuple[dict[str, Any], ...]:
+        parsed = self.parsed
+        bundles = getattr(parsed, "sequence_bundles", {}) if parsed is not None else {}
+        return tuple({
+            "id": bundle.id,
+            "resource": bundle.resource,
+            "entry_count": len(bundle.entries),
+            "coordinates": tuple(bundle.coordinates),
+            "manifest_path": str(bundle.manifest_path),
+            "manifest_sha256": bundle.manifest_sha256,
+        } for bundle in bundles.values() if bundle.manifest_path.is_file() and all(entry.sequence_file.is_file() for entry in bundle.entries))
+
+    def list_sequence_bundle_entries(self, bundle_id: str) -> tuple[dict[str, Any], ...]:
+        parsed = self.parsed
+        bundles = getattr(parsed, "sequence_bundles", {}) if parsed is not None else {}
+        if bundle_id not in bundles:
+            raise KeyError(f"Unknown sequence bundle: {bundle_id}")
+        if not bundles[bundle_id].manifest_path.is_file():
+            raise FileNotFoundError(f"Bundle '{bundle_id}' is not materialized; run Prepare first")
+        return tuple(entry.to_dict() for entry in bundles[bundle_id].entries)
+
+    def preview_sequence_bundle_entry(self, bundle_id: str, entry_id: str):
+        parsed = self.parsed
+        bundles = getattr(parsed, "sequence_bundles", {}) if parsed is not None else {}
+        if bundle_id not in bundles:
+            raise KeyError(f"Unknown sequence bundle: {bundle_id}")
+        entry = next((item for item in bundles[bundle_id].entries if item.id == entry_id), None)
+        if entry is None:
+            raise KeyError(f"Bundle '{bundle_id}' has no entry '{entry_id}'")
+        return normalized_sequence_file_preview(entry.sequence_file)
 
     def validate_sequence_plan(self, plan_id: str):
         return self.sequence_authoring().located_issues(plan_id)

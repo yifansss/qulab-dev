@@ -112,7 +112,9 @@ class OperatorApp:
         ttk.Button(buttons, text="Prepare", command=self._prepare).grid(row=0, column=0, sticky="ew", padx=2)
         self.start_button = ttk.Button(buttons, text="Start", command=self._start)
         self.start_button.grid(row=0, column=1, sticky="ew", padx=2)
-        ttk.Button(buttons, text="Stop", command=self._stop).grid(row=0, column=2, sticky="ew", padx=2)
+        self.stop_button = ttk.Button(buttons, text="Stop", command=self._stop)
+        self.stop_button.grid(row=0, column=2, sticky="ew", padx=2)
+        self.stop_button.state(["disabled"])
 
     def _build_plot_and_log(self) -> None:
         bottom = ttk.PanedWindow(self.root, orient=tk.VERTICAL)
@@ -224,6 +226,7 @@ class OperatorApp:
             return
         self.running = True
         self.start_button.state(["disabled"])
+        self.stop_button.state(["!disabled"])
         self.plot_series.clear()
         self._draw_plot()
         self._log("Starting dry-run...")
@@ -239,7 +242,11 @@ class OperatorApp:
 
     def _stop(self) -> None:
         if self.running:
-            self._log("Stop requested: current dry-run executor does not support reliable mid-run cancellation yet.")
+            if self.controller.stop_run():
+                self.stop_button.state(["disabled"])
+                self._log("Stop requested; cancelling the run and stopping active hardware...")
+            else:
+                self._log("Stop requested while the run is still starting; try again after RunStarted.")
         else:
             self._log("Stop is idle: no dry-run is running.")
 
@@ -257,10 +264,12 @@ class OperatorApp:
                     self._log(f"RunCompleted {result.status}")
                     self.running = False
                     self.start_button.state(["!disabled"])
+                    self.stop_button.state(["disabled"])
                 elif isinstance(item, tuple) and item[0] == "error":
                     self._log(f"ERROR {item[1]}")
                     self.running = False
                     self.start_button.state(["!disabled"])
+                    self.stop_button.state(["disabled"])
         except queue.Empty:
             pass
         self.root.after(100, self._drain_events)

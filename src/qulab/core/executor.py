@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import time
+from threading import Event as ThreadEvent
 from typing import Any, Callable
 
 from .context import ExperimentContext
@@ -47,6 +47,16 @@ class ExperimentExecutor:
         self.dry_run = dry_run
         self.state = "created"
         self.run_id = procedure.name
+        self._cancel_requested = ThreadEvent()
+        self._in_cleanup = False
+
+    def request_stop(self) -> None:
+        """Request cooperative cancellation at the next safe executor boundary."""
+        self._cancel_requested.set()
+
+    @property
+    def stop_requested(self) -> bool:
+        return self._cancel_requested.is_set()
 
     def run(self) -> None:
         self.state = "running"
@@ -54,9 +64,12 @@ class ExperimentExecutor:
         failure: BaseException | None = None
 
         try:
+            self._check_cancelled()
             self._execute_steps(self.procedure.setup)
             self._execute_steps(self.procedure.body)
             self.state = "completed"
+        except ExperimentCancelled:
+            self.state = "cancelled"
         except BaseException as exc:
             failure = exc
             self.state = "failed"
@@ -71,14 +84,18 @@ class ExperimentExecutor:
             raise failure
 
     def _run_cleanup(self) -> BaseException | None:
+        self._in_cleanup = True
         try:
             self._execute_steps(self.procedure.cleanup)
         except BaseException as exc:
             return exc
+        finally:
+            self._in_cleanup = False
         return None
 
     def _execute_steps(self, steps: list[Step]) -> None:
         for step in steps:
+            self._check_cancelled()
             self._execute_step(step)
 
     def _execute_step(self, step: Step) -> None:
@@ -96,6 +113,18 @@ class ExperimentExecutor:
         )
         try:
             self._dispatch_step(step)
+        except ExperimentCancelled:
+            self.event_bus.emit(
+                StepCompleted(
+                    step_id=step.id or "",
+                    step_name=step.name,
+                    step_kind=step.kind,
+                    status="cancelled",
+                    point_id=self.context.current_point_id,
+                    coords=self.context.snapshot_coords(),
+                )
+            )
+            raise
         except BaseException as exc:
             self.event_bus.emit(
                 ErrorRaised(
@@ -164,7 +193,12 @@ class ExperimentExecutor:
             )
         else:
             action = self._resolve_action(step.action)
-            result = action(*args, **kwargs) if action is not None else None
+            try:
+                result = action(*args, **kwargs) if action is not None else None
+            except BaseException as exc:
+                if self.stop_requested and not self._in_cleanup:
+                    raise ExperimentCancelled("Run stopped by operator") from exc
+                raise
 
         if step.save_as:
             self.event_bus.emit(
@@ -196,6 +230,7 @@ class ExperimentExecutor:
 
         try:
             for value in step.values:
+                self._check_cancelled()
                 self.context.set_parameter(step.name, value)
                 self.context.coords[step.name] = value
                 self.event_bus.emit(
@@ -227,6 +262,7 @@ class ExperimentExecutor:
 
         try:
             for index in range(step.count):
+                self._check_cancelled()
                 self.context.set_parameter(step.name, index)
                 self.context.coords[step.name] = index
                 self.event_bus.emit(
@@ -256,6 +292,15 @@ class ExperimentExecutor:
 
         try:
             self._execute_steps(step.body)
+        except ExperimentCancelled:
+            self.event_bus.emit(
+                MeasurementCompleted(
+                    point_id=point_id,
+                    status="cancelled",
+                    coords=self.context.snapshot_coords(),
+                )
+            )
+            raise
         except BaseException:
             self.event_bus.emit(
                 MeasurementCompleted(
@@ -280,4 +325,13 @@ class ExperimentExecutor:
         if step.duration_s < 0:
             raise ValueError("wait duration_s must be non-negative")
         if not self.dry_run and step.duration_s > 0:
-            time.sleep(step.duration_s)
+            if self._cancel_requested.wait(step.duration_s):
+                self._check_cancelled()
+
+    def _check_cancelled(self) -> None:
+        if self.stop_requested and not self._in_cleanup:
+            raise ExperimentCancelled("Run stopped by operator")
+
+
+class ExperimentCancelled(RuntimeError):
+    """Internal control-flow exception for an operator-requested stop."""

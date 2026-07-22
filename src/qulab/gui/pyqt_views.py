@@ -133,6 +133,7 @@ if QT_AVAILABLE:
             self.stop_action = QtWidgets.QPushButton("Stop / 停止")
             self.start_action.setObjectName("primaryButton")
             self.stop_action.setObjectName("dangerButton")
+            self.stop_action.setEnabled(False)
             for button in (self.prepare_action, self.start_action, self.stop_action):
                 toolbar.addWidget(button)
             self.load_action.clicked.connect(self._choose_yaml)
@@ -1281,6 +1282,7 @@ if QT_AVAILABLE:
                 return
             self.running = True
             self.start_action.setEnabled(False)
+            self.stop_action.setEnabled(True)
             self.plot.clear()
             self.preview_table.setRowCount(0)
             hardware_run = bool(
@@ -1304,7 +1306,11 @@ if QT_AVAILABLE:
 
         def _stop(self) -> None:
             if self.running:
-                self._log("Stop requested: current dry-run executor does not support reliable mid-run cancellation yet.")
+                if self.controller.stop_run():
+                    self.stop_action.setEnabled(False)
+                    self._log("Stop requested; cancelling the run and stopping active hardware...")
+                else:
+                    self._log("Stop requested while the run is still starting; try again once RunStarted appears.")
             else:
                 self._log("Stop is idle: no dry-run is running.")
 
@@ -1324,6 +1330,7 @@ if QT_AVAILABLE:
                         changed = True
                         self.running = False
                         self.start_action.setEnabled(True)
+                        self.stop_action.setEnabled(False)
                     elif isinstance(item, tuple) and item[0] == "sequence_editor_done":
                         self._handle_sequence_editor_done(item)
                     elif isinstance(item, tuple) and item[0] == "sequence_prepare":
@@ -1332,6 +1339,7 @@ if QT_AVAILABLE:
                         self._log(f"ERROR {item[1]}")
                         self.running = False
                         self.start_action.setEnabled(True)
+                        self.stop_action.setEnabled(False)
             except queue.Empty:
                 pass
             if changed:

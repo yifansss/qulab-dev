@@ -18,7 +18,7 @@ from .events import (
     StepCompleted,
     StepStarted,
 )
-from .executor import ExperimentExecutor
+from .executor import ExperimentCancelled, ExperimentExecutor
 from .parameter import P, Parameter, ParameterRef, ScanValues
 from .procedure import (
     ActionStep,
@@ -44,6 +44,7 @@ __all__ = [
     "EventBus",
     "ExperimentContext",
     "ExperimentExecutor",
+    "ExperimentCancelled",
     "LogMessage",
     "MeasurementCompleted",
     "MeasurementStarted",

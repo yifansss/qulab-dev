@@ -205,3 +205,34 @@ def test_error_event_is_emitted_and_cleanup_still_runs() -> None:
     assert any(event.type == "ErrorRaised" and event.message == "boom" for event in bus.events)
     assert bus.events[-1].type == "RunCompleted"
     assert bus.events[-1].status == "failed"
+
+
+def test_stop_request_cancels_scan_and_still_runs_cleanup() -> None:
+    calls = []
+    cleanup_calls = []
+    executor = None
+
+    def read(value):
+        calls.append(value)
+        if value == 1:
+            executor.request_stop()
+        return value
+
+    procedure = Procedure(
+        name="cancel_scan",
+        body=[ScanStep(name="index", values=ScanValues.explicit([1, 2, 3]), body=[
+            ActionStep(name="read", action=read, kwargs={"value": P("index")}, save_as="value")
+        ])],
+        cleanup=[ActionStep(name="cleanup", action=lambda: cleanup_calls.append("done"))],
+    )
+    bus = EventBus()
+    executor = ExperimentExecutor(procedure, event_bus=bus)
+
+    executor.run()
+
+    assert executor.state == "cancelled"
+    assert calls == [1]
+    assert cleanup_calls == ["done"]
+    assert bus.events[-1].type == "RunCompleted"
+    assert bus.events[-1].status == "cancelled"
+    assert not [event for event in bus.events if event.type == "ErrorRaised"]
