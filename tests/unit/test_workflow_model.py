@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from qulab.config import load_experiment_config, parse_experiment_config
+from qulab.gui.controller import OperatorController
 from qulab.gui.workflow_model import (
     add_step,
     build_workflow_tree,
@@ -25,6 +26,36 @@ def test_build_workflow_tree_contains_sections_and_nested_steps() -> None:
     procedure = root.children[1]
     assert procedure.children[0].kind == "scan"
     assert procedure.children[0].children[1].kind == "scan"
+
+
+def test_build_workflow_tree_accepts_missing_optional_sections() -> None:
+    config = {"name": "procedure_only", "procedure": []}
+
+    root = build_workflow_tree(config)
+
+    assert [child.kind for child in root.children] == ["setup", "procedure", "cleanup"]
+    assert all(child.children == [] for child in root.children)
+
+
+def test_add_step_creates_a_missing_optional_section() -> None:
+    config = {"name": "procedure_only", "procedure": []}
+
+    updated = add_step(config, ("setup",), make_default_step("call"))
+
+    assert "setup" not in config
+    assert updated["setup"] == [{"call": "resource.method", "args": {}}]
+
+
+def test_controller_loads_config_without_setup_or_cleanup(tmp_path: Path) -> None:
+    controller = OperatorController(tmp_path / "runs")
+
+    controller.load_config(ROOT / "configs" / "experiments" / "live_view_showcase.yaml")
+    root = controller.workflow_tree()
+
+    assert [child.kind for child in root.children] == ["setup", "procedure", "cleanup"]
+    assert root.children[0].children == []
+    assert root.children[1].children
+    assert root.children[2].children == []
 
 
 def test_workflow_add_duplicate_delete_step_roundtrip() -> None:

@@ -79,7 +79,7 @@ def add_step(config: dict[str, Any], parent_path: Path, step: dict[str, Any]) ->
     """Return a new config with ``step`` appended to a section or body list."""
 
     updated = deepcopy(config)
-    steps = _step_list(updated, parent_path)
+    steps = _step_list(updated, parent_path, create=True)
     steps.append(deepcopy(step))
     return updated
 
@@ -183,8 +183,19 @@ def _step_list_from_step(step: dict[str, Any], kind: str) -> list[dict[str, Any]
     return []
 
 
-def _step_list(config: dict[str, Any], path: Path) -> list[Any]:
-    target = get_node(config, path)
+def _step_list(config: dict[str, Any], path: Path, *, create: bool = False) -> list[Any]:
+    try:
+        target = get_node(config, path)
+    except KeyError:
+        if not create:
+            return []
+        if not path or not isinstance(path[-1], str):
+            raise
+        parent = get_node(config, path[:-1])
+        if not isinstance(parent, dict):
+            raise TypeError(f"Workflow parent path does not point to a mapping: {path[:-1]}")
+        target = []
+        parent[path[-1]] = target
     if not isinstance(target, list):
         raise TypeError(f"Workflow path does not point to a step list: {path}")
     return target
