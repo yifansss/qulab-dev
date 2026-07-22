@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 from threading import RLock
 from typing import Any, Callable
 
-from qulab.config import ParsedExperiment, load_experiment_config, parse_experiment_config
+from qulab.config import ConfigLoadResult, ParsedExperiment, parse_experiment_config, validate_config_candidate
 from qulab.config.errors import ConfigValidationError
 from qulab.config.refs import parameter_refs_to_strings
 from qulab.core import Event, EventBus, ExperimentExecutor
@@ -19,7 +20,7 @@ from qulab.sequence_generation.preparation import parse_sequence_plans
 from qulab.sequence_generation.registry import DEFAULT_PROVIDER_REGISTRY
 from qulab.sequence_generation.sampling import normalize_parameter_values
 from qulab.sequence_generation.providers.asg_model import build_target_selector, inspect_template
-from qulab.storage import DatasetModel, RunReader, RunStore, SliceController
+from qulab.storage import DatasetModel, HistoricalRunWorkspace, RunReader, RunStore, SliceController
 from qulab.storage.run_reader import BackendPreference
 from qulab.storage.slicing import HeatmapData, LineData, TraceData
 from .workflow_model import (
@@ -61,6 +62,8 @@ class OperatorController:
         self.parsed: ParsedExperiment | None = None
         self.last_run_path: Path | None = None
         self.sequence_sweep_model: SequenceSweepEditorModel | None = None
+        self.last_candidate_result: ConfigLoadResult | None = None
+        self.historical_workspace: HistoricalRunWorkspace | None = None
         self._live_lock = RLock()
         self.live_catalog = LiveDataCatalog()
         self.live_buffer = LivePointBuffer()
@@ -76,11 +79,38 @@ class OperatorController:
         assert self.config is not None
         return deepcopy(self.config)
 
-    def load_config(self, path: Path | str) -> None:
-        self.config_path = Path(path)
-        self.config = load_experiment_config(self.config_path)
-        self.parsed = None
-        self.sequence_sweep_model = SequenceSweepEditorModel.load(self.config)
+    def load_config(self, path: Path | str) -> ConfigLoadResult:
+        """Validate and atomically activate a candidate without hardware I/O."""
+
+        result = validate_config_candidate(path)
+        if result.ok and result.candidate_config is not None and result.parsed is not None:
+            self.config_path = Path(path)
+            self.config = deepcopy(result.candidate_config)
+            self.parsed = result.parsed
+            self.sequence_sweep_model = SequenceSweepEditorModel.load(self.config)
+            self.reset_live_state()
+            result = replace(result, activated=True)
+        self.last_candidate_result = result
+        return result
+
+    @property
+    def has_active_config(self) -> bool:
+        return self.config is not None
+
+    def candidate_issues(self) -> tuple[PreflightIssueViewModel, ...]:
+        if self.last_candidate_result is None:
+            return ()
+        return tuple(
+            PreflightIssueViewModel(
+                item.severity,
+                item.code,
+                item.message,
+                item.location,
+                item.hint or item.excerpt or "",
+                item.workflow_path,
+            )
+            for item in self.last_candidate_result.diagnostics
+        )
 
     def save_config(self, path: Path | str) -> Path:
         self._require_config()
@@ -345,6 +375,18 @@ class OperatorController:
         if selected_run_path is None:
             raise RuntimeError("No run path is available yet")
         return DatasetModel(RunReader(selected_run_path, backend=backend))
+
+    def open_historical_run(self, run_path: Path | str) -> HistoricalRunWorkspace:
+        """Open a run read-only without altering the active experiment."""
+
+        workspace = HistoricalRunWorkspace.open(run_path)
+        self.historical_workspace = workspace
+        return workspace
+
+    def clone_historical_run(self, destination: Path | str, *, use_resolved: bool = False) -> ConfigLoadResult:
+        if self.historical_workspace is None:
+            raise RuntimeError("No historical run is open")
+        return self.historical_workspace.clone_as_draft(destination, use_resolved=use_resolved)
 
     def list_run_data_keys(self, run_path: Path | str | None = None, backend: BackendPreference = "auto") -> list[str]:
         return self.open_run_dataset(run_path, backend).list_data_keys()

@@ -559,9 +559,10 @@ if QT_AVAILABLE:
             self.apply_button.clicked.connect(self._apply_inspector)
             layout.addWidget(self.apply_button)
             layout.addWidget(QtWidgets.QLabel("Preflight Issues / 预检查问题"))
-            self.issue_table = QtWidgets.QTableWidget(0, 3)
-            self.issue_table.setHorizontalHeaderLabels(["severity", "code", "message"])
+            self.issue_table = QtWidgets.QTableWidget(0, 5)
+            self.issue_table.setHorizontalHeaderLabels(["severity", "code", "location", "message", "hint"])
             self.issue_table.horizontalHeader().setStretchLastSection(True)
+            self.issue_table.cellDoubleClicked.connect(self._focus_issue)
             layout.addWidget(self.issue_table, 1)
             return panel
 
@@ -623,19 +624,59 @@ if QT_AVAILABLE:
 
         def _load_config(self, path: Path) -> None:
             try:
-                self.controller.load_config(path)
+                result = self.controller.load_config(path)
             except Exception as exc:
                 QtWidgets.QMessageBox.critical(self, "Load failed", str(exc))
                 return
-            self.plot.clear()
-            self.preview_table.setRowCount(0)
-            self._refresh_tree()
-            self._refresh_sequence_resource_choices()
-            self._refresh_operator_parameters()
-            self._refresh_sequence_sweep()
-            self._clear_table(self.resource_table)
-            self._clear_table(self.issue_table)
-            self._log(f"Loaded config: {path}")
+            self._show_candidate_issues()
+            if result.activated:
+                self.plot.clear()
+                self.preview_table.setRowCount(0)
+                self._refresh_tree()
+                self._refresh_sequence_resource_choices()
+                self._refresh_operator_parameters()
+                self._refresh_sequence_sweep()
+                self._clear_table(self.resource_table)
+                status = "Loaded with warnings" if result.warnings else "Loaded"
+                self._log(f"{status}: {path}")
+            else:
+                active = self.controller.config_path
+                retained = f" Previous active config retained: {active}." if active else " No active config is available."
+                self._log(f"Load blocked: {path}.{retained}")
+                QtWidgets.QMessageBox.critical(
+                    self,
+                    "Load blocked",
+                    f"{len(result.errors)} error(s) blocked activation.{retained}\nSee Preflight Issues for details.",
+                )
+            self.prepare_action.setEnabled(self.controller.has_active_config)
+            self.start_action.setEnabled(self.controller.has_active_config)
+
+        def _show_candidate_issues(self) -> None:
+            self.issue_table.setRowCount(0)
+            for issue in self.controller.candidate_issues():
+                row = self.issue_table.rowCount()
+                self.issue_table.insertRow(row)
+                values = (issue.severity, issue.code, issue.location, issue.message, issue.hint)
+                for column, value in enumerate(values):
+                    item = QtWidgets.QTableWidgetItem(str(value))
+                    item.setToolTip(f"{issue.location}\n{issue.message}\n{issue.hint}".strip())
+                    item.setData(_user_role(), issue.workflow_path)
+                    self.issue_table.setItem(row, column, item)
+
+        def _focus_issue(self, row: int, _column: int) -> None:
+            item = self.issue_table.item(row, 0)
+            path = item.data(_user_role()) if item is not None else None
+            if not path:
+                return
+            iterator = QtWidgets.QTreeWidgetItemIterator(self.workflow_tree)
+            while iterator.value():
+                tree_item = iterator.value()
+                node = tree_item.data(0, _user_role())
+                if node is not None and tuple(node.path) == tuple(path):
+                    self.workflow_tree.setCurrentItem(tree_item)
+                    self.workflow_tree.scrollToItem(tree_item)
+                    return
+                iterator += 1
 
         def _refresh_tree(self) -> None:
             self.workflow_tree.clear()
@@ -881,7 +922,7 @@ if QT_AVAILABLE:
             for issue in view.issues:
                 row = self.issue_table.rowCount()
                 self.issue_table.insertRow(row)
-                for column, value in enumerate((issue.severity, issue.code, issue.message)):
+                for column, value in enumerate((issue.severity, issue.code, issue.location, issue.message, issue.hint)):
                     self.issue_table.setItem(row, column, QtWidgets.QTableWidgetItem(str(value)))
             self._show_sequence_snapshot(view.sequence_snapshots)
 

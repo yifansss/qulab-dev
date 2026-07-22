@@ -34,6 +34,20 @@ class InstrumentRegistry:
         self.register("pycontrol_lmx", PycontrolLMXAdapter)
         self.register("pycontrol_awg", PycontrolAWGAdapter)
 
+    def has_adapter(self, adapter_name: str) -> bool:
+        """Return whether an adapter can be created, without constructing it."""
+
+        return adapter_name in self._factories
+
+    def list_adapters(self) -> tuple[str, ...]:
+        return tuple(sorted(self._factories))
+
+    def adapter_type(self, adapter_name: str) -> type[Any] | None:
+        """Return a registered class when discovery is class-backed and import-safe."""
+
+        factory = self._factories.get(adapter_name)
+        return factory if isinstance(factory, type) else None
+
     def create(self, resource_name: str, config: dict[str, Any]) -> Any:
         adapter_name = config.get("adapter") or config.get("adaptor")
         if not adapter_name:
