@@ -353,3 +353,31 @@ GUI 交叉规划：`docs/SEQUENCE_LIVE_COMPUTE_GUI_INTEGRATION_PLAN.md`。
 - Live View 可以选择 raw 或 derived key 作图。
 - RunStore 能保存 derived outputs，并在 metadata 中记录 module name/version/inputs/outputs/args。
 - 模块失败时按 `warn|skip|fail` 策略处理，raw data 不丢失。
+
+## P11 Experiment Authoring Reliability
+
+目标：让实验配置在载入阶段就得到结构化、可定位的诊断；让历史 run 能以只读实验现场重新打开；让 Workflow 与 Sequence authoring 由 capability/action/provider schema 驱动，不再要求用户记忆仪器方法、参数和步骤顺序。
+
+规划文档：
+
+- `docs/EXPERIMENT_AUTHORING_DIAGNOSTICS_REPLAY_PLAN.md`
+
+实施顺序：
+
+1. P11.1：transactional candidate load、YAML/source location、结构/引用/offline preflight 诊断和 GUI 定位反馈。
+2. P11.2：Historical Run Workspace、fidelity report、事件时间线回放和安全 Clone as new experiment。
+3. P11.3A：import-safe capability/action schema registry，描述 action 参数、单位、返回、phase、safety 和 ordering contract。
+4. P11.3B：schema-driven Workflow Composer、action palette、动态参数表单、recipe skeleton 和完整性检查。
+5. P11.3C：Guided Sequence Authoring，统一 curated family、generic template sweep 和 standalone editor bridge 的功能目录、预览与反馈。
+
+依赖：P11.2 在 P11.1 diagnostic contract 后开始；P11.3A 可与 P11.2 并行但不能同时修改共享 GUI 文件；P11.3B 依赖 P11.1/P11.3A；P11.3C 依赖 P11.3A/P11.3B 和现有 P9.3 contracts。
+
+Worker prompts：
+
+- `prompts/011_followup_p11_1_transactional_load_diagnostics.md`
+- `prompts/011_followup_p11_2_historical_run_workspace.md`
+- `prompts/011_followup_p11_3a_capability_action_schema_registry.md`
+- `prompts/011_followup_p11_3b_guided_workflow_composer.md`
+- `prompts/011_followup_p11_3c_guided_sequence_authoring.md`
+
+重要边界：历史现场只恢复记录过的软件配置、数据、事件和 provenance，绝不自动恢复硬件输出；GUI 仍保存 canonical YAML；core workflow 不展开 pulse-level sequence；所有 load/authoring validation 默认不连接硬件。
