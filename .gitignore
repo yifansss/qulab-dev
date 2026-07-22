@@ -27,8 +27,12 @@ runs/*
 !runs/.gitkeep
 demo_runs/
 
+# Qulab generated sequence bundles and staging caches
+/.qulab/
+
 # Independently versioned hardware drivers (clone separately)
 /drivers/pycontrol/
+/drivers/*.zip
 
 # Historical snapshots and local archives
 /qulab/
