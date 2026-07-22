@@ -336,11 +336,11 @@ Phase E 核心验收：用户只修改 GUI/YAML 中的 Rabi `tau_s` 范围即可
 
 阶段：
 
-1. Phase A / P10.1：新增 `analysis.live` / `analysis.modules` schema、ComputeModule 协议、dependency graph 和 import-safe registry。Prompt：`prompts/010_followup_p10_1_analysis_schema_registry.md`。
-2. Phase B / P10.2：新增同步 `LiveComputeEngine`、queued EventBus re-emit、`DerivedData` / `AnalysisStatus`、conditional RunStore storage。Prompt：`prompts/010_followup_p10_2_live_compute_engine_storage.md`。
-3. Phase C / P10.3：Live View 增加 raw/derived catalog、plot/dimension selector、module status，并显示 P9 Sequence Family/Template/Generic Sweep 当前 entry/hash/context。Prompt：`prompts/010_followup_p10_3_live_view_gui_sequence_integration.md`。
-4. Phase D / P10.4：记录完整 analysis provenance，增加 immutable versioned post-run recompute CLI/result groups 和 RunReader/Data Viewer group selection。Prompt：`prompts/010_followup_p10_4_analysis_provenance_recompute.md`。
-5. Phase E / P10.5：加入有界异步 compute queue、thread-safe dispatch、latency/lag、backpressure/skip/drain 策略。Prompt：`prompts/010_followup_p10_5_async_compute_backpressure.md`。
+1. Phase A / P10.1（已完成）：`analysis.live` / `analysis.modules` schema、ComputeModule 协议、dependency graph 和 import-safe registry。
+2. Phase B / P10.2（已完成）：同步 `LiveComputeEngine`、queued EventBus、`DerivedData` / `AnalysisStatus` 和 conditional RunStore storage。
+3. Phase C / P10.3（已完成）：raw/derived Live Run catalog、plot/dimension selection、module status 和 P9 sequence context。
+4. Phase D / P10.4（已完成）：完整 provenance、immutable recompute CLI/result groups 和 group-aware RunReader/DatasetModel。
+5. Phase E / P10.5（已完成）：有界单 worker async queue、serialized thread-safe dispatch、metrics、五种 backpressure 和 drain 策略。
 
 GUI 交叉规划：`docs/SEQUENCE_LIVE_COMPUTE_GUI_INTEGRATION_PLAN.md`。
 

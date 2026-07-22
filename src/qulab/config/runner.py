@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from qulab.core import EventBus, ExperimentExecutor
+from qulab.analysis import create_live_compute_engine
 from qulab.storage import RunStore
 
 from .errors import ConfigValidationError
@@ -23,6 +24,7 @@ class RunResult:
     executor_state: str
     events: list[Any]
     validation: Any
+    analysis_summary: dict[str, Any] | None = None
 
 
 def run_dry_config(config_source: str | Path | dict[str, Any], run_root: str | Path) -> RunResult:
@@ -45,14 +47,31 @@ def run_dry_config(config_source: str | Path | dict[str, Any], run_root: str | P
         resolved_config=parameter_refs_to_strings(parsed.resolved_config),
         sequence_bundles=parsed.sequence_bundles,
         sequence_preparation=parsed.sequence_preparation,
+        analysis_plan=parsed.analysis_plan,
     )
     store.open()
     bus.subscribe(store.handle_event)
     executor = ExperimentExecutor(parsed.procedure, parsed.context, bus, dry_run=True)
+    engine = create_live_compute_engine(parsed.analysis_plan, None, bus) if parsed.analysis_plan is not None else None
     try:
+        if engine is not None:
+            engine.setup({"run_id": store.run_id, "mode": "live", "experiment": parsed.name,
+                          "analysis_plan": parsed.analysis_plan.to_dict()})
+            bus.subscribe(engine.handle_event)
         executor.run()
     finally:
-        store.close(status=executor.state)
+        close_error: BaseException | None = None
+        try:
+            if engine is not None:
+                try:
+                    engine.close()
+                except BaseException as exc:
+                    close_error = exc
+                store.set_analysis_summary(engine.summary())
+        finally:
+            store.close(status="failed" if close_error is not None else (executor.state if executor.state != "created" else "failed"))
+        if close_error is not None:
+            raise close_error
 
     return RunResult(
         parsed=parsed,
@@ -60,4 +79,5 @@ def run_dry_config(config_source: str | Path | dict[str, Any], run_root: str | P
         executor_state=executor.state,
         events=list(bus.events),
         validation=parsed.validation,
+        analysis_summary=engine.summary() if engine is not None else None,
     )

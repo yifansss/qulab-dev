@@ -168,3 +168,11 @@ Recommendation:
   rendering. CSV remains a compatibility/readability backend and may scan or
   load larger tables unless an index/cache layer is added.
 - Do not depend on optional plotting packages for core tests.
+
+## Analysis result groups
+
+`RunReader.list_data_groups()` exposes `raw`, optional `live`, and immutable
+`analysis:<result_id>` groups. `list_data_keys`, `get_data_var`,
+`get_data_var_metadata`, and `DatasetModel` accept an explicit group. The same
+key may exist in live and recomputed groups because group identity is mandatory;
+analysis results are never merged destructively into raw storage.

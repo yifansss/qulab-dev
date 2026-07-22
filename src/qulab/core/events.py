@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from collections import deque
+from threading import RLock
 from typing import Any, Callable
 
 
@@ -88,6 +90,39 @@ class DataPoint(Event):
 
 
 @dataclass
+class DerivedData(Event):
+    type: str = field(init=False, default="DerivedData")
+    point_id: str = ""
+    coords: dict[str, Any] = field(default_factory=dict)
+    data: dict[str, Any] = field(default_factory=dict)
+    source_module: str = ""
+    module_version: str = ""
+    input_keys: list[str] = field(default_factory=list)
+    output_keys: list[str] = field(default_factory=list)
+    units: dict[str, str | None] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    quality: dict[str, Any] = field(default_factory=dict)
+    save: bool = True
+    show: bool = False
+    run_mode: str = "live"
+    latency_s: float | None = None
+
+
+@dataclass
+class AnalysisStatus(Event):
+    type: str = field(init=False, default="AnalysisStatus")
+    module: str = ""
+    state: str = "idle"
+    point_id: str | None = None
+    message: str | None = None
+    latency_s: float | None = None
+    queue_depth: int = 0
+    error_type: str | None = None
+    fail_policy: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class SequenceSelected(Event):
     type: str = field(init=False, default="SequenceSelected")
     point_id: str | None = None
@@ -126,11 +161,28 @@ class EventBus:
     def __init__(self) -> None:
         self.events: list[Event] = []
         self._subscribers: list[Callable[[Event], None]] = []
+        self._queue: deque[Event] = deque()
+        self._dispatching = False
+        self._lock = RLock()
 
     def emit(self, event: Event) -> None:
-        self.events.append(event)
-        for callback in list(self._subscribers):
-            callback(event)
+        with self._lock:
+            self.events.append(event)
+            self._queue.append(event)
+            if self._dispatching:
+                return
+            self._dispatching = True
+            try:
+                while self._queue:
+                    current = self._queue.popleft()
+                    for callback in list(self._subscribers):
+                        callback(current)
+            except BaseException:
+                self._queue.clear()
+                raise
+            finally:
+                self._dispatching = False
 
     def subscribe(self, callback: Callable[[Event], None]) -> None:
-        self._subscribers.append(callback)
+        with self._lock:
+            self._subscribers.append(callback)

@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
+from threading import RLock
 from typing import Any, Callable
 
 from qulab.config import ParsedExperiment, load_experiment_config, parse_experiment_config
 from qulab.config.errors import ConfigValidationError
 from qulab.config.refs import parameter_refs_to_strings
 from qulab.core import Event, EventBus, ExperimentExecutor
+from qulab.analysis import create_live_compute_engine
+from qulab.analysis.validation import collect_known_raw_keys
 from qulab.sequence_files import discover_sequence_references, inspect_sequence_file
 from qulab.sequence_generation import SequenceGenerationError, prepare_and_parse_experiment_config
 from qulab.sequence_generation.preparation import parse_sequence_plans
@@ -42,6 +45,10 @@ from .models import (
 )
 from .operator_parameters import OperatorParameterSpec, apply_operator_parameter, discover_operator_parameters
 from .sequence_sweep_model import PlanEstimate, SequencePlanViewModel, SequenceSweepEditorModel
+from .live_data_catalog import LiveDataCatalog, LivePointBuffer
+from .live_plot_model import LivePlotModel, LivePlotSelection
+from .analysis_status_model import AnalysisStatusModel
+from .sequence_context_model import SequenceContextModel
 
 
 class OperatorController:
@@ -54,6 +61,12 @@ class OperatorController:
         self.parsed: ParsedExperiment | None = None
         self.last_run_path: Path | None = None
         self.sequence_sweep_model: SequenceSweepEditorModel | None = None
+        self._live_lock = RLock()
+        self.live_catalog = LiveDataCatalog()
+        self.live_buffer = LivePointBuffer()
+        self.live_plot_model = LivePlotModel(self.live_catalog, self.live_buffer)
+        self.analysis_status_model = AnalysisStatusModel()
+        self.sequence_context_model = SequenceContextModel()
 
     @property
     def current_config(self) -> dict[str, Any]:
@@ -201,6 +214,8 @@ class OperatorController:
             messages = "; ".join(issue.message for issue in parsed.validation.errors)
             raise ConfigValidationError(messages or "Config validation failed")
 
+        self.reset_live_state()
+
         bus = EventBus()
         store = RunStore(
             root=self.run_root,
@@ -209,14 +224,23 @@ class OperatorController:
             resolved_config=parameter_refs_to_strings(parsed.resolved_config),
             sequence_bundles=getattr(parsed, "sequence_bundles", {}),
             sequence_preparation=getattr(parsed, "sequence_preparation", None),
+            analysis_plan=getattr(parsed, "analysis_plan", None),
         )
         store.open()
         bus.subscribe(store.handle_event)
-        if event_callback is not None:
-            bus.subscribe(event_callback)
-
         executor = ExperimentExecutor(parsed.procedure, parsed.context, bus, dry_run=True)
+        analysis_plan = getattr(parsed, "analysis_plan", None)
+        engine = create_live_compute_engine(analysis_plan, None, bus) if analysis_plan is not None else None
         try:
+            if engine is not None:
+                engine.setup({"run_id": store.run_id, "mode": "live", "experiment": parsed.name,
+                              "analysis_plan": analysis_plan.to_dict()})
+                bus.subscribe(engine.handle_event)
+            def live_callback(event: Event) -> None:
+                self.handle_live_event(event)
+                if event_callback is not None:
+                    event_callback(event)
+            bus.subscribe(live_callback)
             if connect_hardware:
                 self._connect_resources(parsed.context.resources)
             executor.run()
@@ -225,10 +249,58 @@ class OperatorController:
                 if connect_hardware:
                     self._disconnect_resources(parsed.context.resources)
             finally:
-                store.close(status=executor.state)
+                close_error: BaseException | None = None
+                try:
+                    if engine is not None:
+                        try:
+                            engine.close()
+                        except BaseException as exc:
+                            close_error = exc
+                        store.set_analysis_summary(engine.summary())
+                finally:
+                    store.close(status="failed" if close_error is not None else (executor.state if executor.state != "created" else "failed"))
+                if close_error is not None:
+                    raise close_error
 
         self.last_run_path = store.run_path
         return RunViewModel(run_path=str(store.run_path), status=executor.state, event_count=len(bus.events))
+
+    def reset_live_state(self, max_points: int = 1000) -> None:
+        parsed = self.parsed
+        with self._live_lock:
+            self.live_catalog = LiveDataCatalog()
+            if parsed is not None:
+                raw_keys = collect_known_raw_keys(parsed.procedure)
+                coord_dims = _scan_coord_names(parsed.config)
+                self.live_catalog.declare_from_config(raw_keys, getattr(parsed, "analysis_plan", None), coord_dims)
+            self.live_buffer = LivePointBuffer(max_points=max_points)
+            self.live_plot_model = LivePlotModel(self.live_catalog, self.live_buffer)
+            self.live_plot_model.initialize_defaults()
+            self.analysis_status_model = AnalysisStatusModel(getattr(parsed, "analysis_plan", None) if parsed else None)
+            self.sequence_context_model = SequenceContextModel(_single_sequence_snapshot(parsed.config if parsed else None))
+
+    def handle_live_event(self, event: Event) -> None:
+        with self._live_lock:
+            self.live_catalog.handle_event(event)
+            self.live_buffer.handle_event(event)
+            self.analysis_status_model.handle_event(event)
+            self.sequence_context_model.handle_event(event)
+            self.live_plot_model.initialize_defaults()
+
+    def get_live_data_catalog(self) -> LiveDataCatalog:
+        return self.live_catalog
+
+    def get_live_plot_data(self, selection: LivePlotSelection | None = None):
+        with self._live_lock:
+            return self.live_plot_model.get_plot_data(selection)
+
+    def get_analysis_statuses(self):
+        with self._live_lock:
+            return self.analysis_status_model.list()
+
+    def get_current_sequence_context(self):
+        with self._live_lock:
+            return self.sequence_context_model.current()
 
     def open_run_dataset(self, run_path: Path | str | None = None, backend: BackendPreference = "auto") -> DatasetModel:
         """Open a completed run for read-only panel preview through the storage model."""
@@ -505,3 +577,33 @@ class OperatorController:
                     first_error = exc
         if first_error is not None:
             raise first_error
+
+
+def _scan_coord_names(config: dict[str, Any] | None) -> tuple[str, ...]:
+    names: list[str] = []
+    def walk(steps: Any) -> None:
+        if not isinstance(steps, list): return
+        for step in steps:
+            if not isinstance(step, dict): continue
+            for kind in ("scan", "average"):
+                payload = step.get(kind)
+                if isinstance(payload, dict):
+                    name = payload.get("name")
+                    if isinstance(name, str) and name not in names: names.append(name)
+                    walk(payload.get("body"))
+            for kind in ("measurement", "run"):
+                payload = step.get(kind)
+                if isinstance(payload, dict): walk(payload.get("body", payload.get("steps")))
+    if config:
+        walk(config.get("procedure"))
+    return tuple(names)
+
+
+def _single_sequence_snapshot(config: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not config: return None
+    resources = config.get("resources", {})
+    if not isinstance(resources, dict): return None
+    for name, resource in resources.items():
+        if isinstance(resource, dict) and (resource.get("sequence_file") or resource.get("sequence_path")):
+            return {"resource": name, "sequence_file": resource.get("sequence_file") or resource.get("sequence_path")}
+    return None

@@ -1,6 +1,6 @@
 # Live Compute and Derived Data Framework Plan
 
-Status: planned framework, not yet implemented.
+Status: P10 Phases A-E implemented (schema/registry, sync engine/storage, Live Run integration, immutable recompute groups, and bounded async execution).
 
 This document defines a framework for real-time derived quantities in Qulab.
 It intentionally does not define experiment-specific formulas such as ODMR
@@ -37,19 +37,17 @@ Implemented today:
 - `DataPoint` events carry point data and coordinates.
 - PyQt Operator Console subscribes to events and displays:
   - run log
-  - simple line plot
-  - point preview table
+  - raw/derived catalog and plot selection controls
+  - module queue/latency status and sequence context
+  - line preview plus point/heatmap/trace-capable headless models
 - The offline Data Viewer can read completed run folders through
   `RunReader`, `DatasetModel`, and `SliceController`.
+- `ComputeModule`, the provenance-aware registry, `DerivedData`,
+  `AnalysisStatus`, per-module policies, immutable recompute groups, and the
+  bounded async worker are implemented.
 
-Not yet implemented:
-
-- A formal compute module interface.
-- A compute registry/loader.
-- A dedicated derived-data event type.
-- Live View selection of raw vs derived data keys.
-- Persistent metadata for compute module provenance.
-- Per-module enable/show/save/fail policies.
+Future work is process isolation for untrusted/hung modules and richer Qt plot
+renderers; the storage and headless line/heatmap/trace contracts are complete.
 
 ## 3. Design Goals
 
@@ -615,10 +613,16 @@ displayed, stored, and tracked.
 
 ## 18. Immediate Next Tasks
 
-1. Start P10.1 schema/registry without modifying P9-owned GUI files.
-2. Start P10.2 after P10.1 and establish the final event/storage lifecycle.
-3. Wait for P9.3C handoff before P10.3 modifies shared controller/Qt views.
-4. Implement P10.4 immutable recompute groups after the live storage contract is
-   stable.
-5. Implement P10.5 async queue only after synchronous engine and GUI point
-   association are proven.
+P10.1-P10.5 are implemented. The thread backend deliberately uses one worker,
+a bounded queue, and serialized EventBus subscriber dispatch. It cannot kill
+arbitrary hung Python module code; after a drain timeout it suppresses late
+events and reports the worker as hung. Process isolation remains future work.
+
+Post-run usage:
+
+```bash
+python -m qulab.analysis.recompute --run runs/.../run_id --module scale_preview --result-id scale_v2 --set scale=2 --backend csv
+```
+
+Results are atomically committed beneath `analysis/<result_id>/`; source run
+files outside `analysis/` are opened read-only and remain unchanged.

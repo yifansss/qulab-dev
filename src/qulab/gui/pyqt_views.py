@@ -170,12 +170,41 @@ if QT_AVAILABLE:
             live_tab = self._panel("Live Plot / Event Preview / 实时预览")
             plot_layout = QtWidgets.QVBoxLayout(live_tab)
             plot_layout.setContentsMargins(10, 24, 10, 10)
+            live_splitter = QtWidgets.QSplitter(_horizontal())
+            sources = QtWidgets.QWidget()
+            source_layout = QtWidgets.QVBoxLayout(sources)
+            source_layout.setContentsMargins(0, 0, 0, 0)
+            source_layout.addWidget(QtWidgets.QLabel("Raw / Derived Sources"))
+            self.live_source_table = QtWidgets.QTableWidget(0, 4)
+            self.live_source_table.setHorizontalHeaderLabels(["Key", "Source", "Kind", "Storage"])
+            self.live_source_table.horizontalHeader().setStretchLastSection(True)
+            source_layout.addWidget(self.live_source_table)
+            controls = QtWidgets.QHBoxLayout()
+            self.live_plot_type = QtWidgets.QComboBox(); self.live_plot_type.addItems(["line", "heatmap", "trace", "table"])
+            self.live_x_dim = QtWidgets.QComboBox(); self.live_y_dim = QtWidgets.QComboBox()
+            controls.addWidget(self.live_plot_type); controls.addWidget(self.live_x_dim); controls.addWidget(self.live_y_dim)
+            source_layout.addLayout(controls)
+            live_splitter.addWidget(sources)
+
+            center = QtWidgets.QWidget(); center_layout = QtWidgets.QVBoxLayout(center); center_layout.setContentsMargins(0, 0, 0, 0)
             self.plot = LinePlotWidget()
             self.preview_table = QtWidgets.QTableWidget(0, 4)
             self.preview_table.setHorizontalHeaderLabels(["point_id", "coords", "x", "y"])
             self.preview_table.horizontalHeader().setStretchLastSection(True)
-            plot_layout.addWidget(self.plot, 2)
-            plot_layout.addWidget(self.preview_table, 1)
+            center_layout.addWidget(self.plot, 2); center_layout.addWidget(self.preview_table, 1)
+            live_splitter.addWidget(center)
+
+            context = QtWidgets.QWidget(); context_layout = QtWidgets.QVBoxLayout(context); context_layout.setContentsMargins(0, 0, 0, 0)
+            context_layout.addWidget(QtWidgets.QLabel("Compute Modules"))
+            self.analysis_status_table = QtWidgets.QTableWidget(0, 4)
+            self.analysis_status_table.setHorizontalHeaderLabels(["Module", "State", "Latency", "Queue"])
+            context_layout.addWidget(self.analysis_status_table)
+            context_layout.addWidget(QtWidgets.QLabel("Sequence Context"))
+            self.live_sequence_context = QtWidgets.QPlainTextEdit(); self.live_sequence_context.setReadOnly(True)
+            context_layout.addWidget(self.live_sequence_context)
+            live_splitter.addWidget(context)
+            live_splitter.setSizes([260, 600, 300])
+            plot_layout.addWidget(live_splitter)
             page.addWidget(live_tab)
 
             log_box = self._panel("Run Log / 运行日志")
@@ -1149,6 +1178,7 @@ if QT_AVAILABLE:
                     if isinstance(item, Event):
                         self.plot.handle_event(item)
                         self._append_preview(item)
+                        self._refresh_live_models()
                         self._log(_event_to_log_line(item))
                     elif isinstance(item, tuple) and item[0] == "run_result":
                         result = item[1]
@@ -1196,6 +1226,38 @@ if QT_AVAILABLE:
             for column, value in enumerate((event.point_id, event.coords, x, y)):
                 self.preview_table.setItem(row, column, QtWidgets.QTableWidgetItem(str(value)))
             self.preview_table.scrollToBottom()
+
+        def _refresh_live_models(self) -> None:
+            if not hasattr(self, "live_source_table"):
+                return
+            catalog = self.controller.get_live_data_catalog()
+            specs = (*catalog.list_raw(), *catalog.list_derived())
+            self.live_source_table.setRowCount(0)
+            dims: list[str] = []
+            for spec in specs:
+                row = self.live_source_table.rowCount(); self.live_source_table.insertRow(row)
+                storage = "saved" if spec.saved else "live-only"
+                for column, value in enumerate((spec.key, spec.source_kind, f"{spec.data_kind} / {spec.status}", storage)):
+                    self.live_source_table.setItem(row, column, QtWidgets.QTableWidgetItem(str(value)))
+                for dim in spec.dims:
+                    if dim not in {"time_s", "channel"} and dim not in dims: dims.append(dim)
+            for combo in (self.live_x_dim, self.live_y_dim):
+                current = combo.currentText(); combo.blockSignals(True); combo.clear(); combo.addItems(dims)
+                if current in dims: combo.setCurrentText(current)
+                combo.blockSignals(False)
+            statuses = self.controller.get_analysis_statuses(); self.analysis_status_table.setRowCount(0)
+            for status in statuses:
+                row = self.analysis_status_table.rowCount(); self.analysis_status_table.insertRow(row)
+                latency = "" if status.last_latency_s is None else f"{status.last_latency_s * 1000:.2f} ms"
+                queue_text = f"{status.queue_depth}/{status.queue_capacity or '-'} drop={status.dropped} {status.worker_state}"
+                for column, value in enumerate((status.module, status.state, latency, queue_text)):
+                    self.analysis_status_table.setItem(row, column, QtWidgets.QTableWidgetItem(str(value)))
+            sequence = self.controller.get_current_sequence_context()
+            self.live_sequence_context.setPlainText("\n".join([
+                f"mode: {sequence.mode}", f"plan: {sequence.plan_id or '-'}", f"bundle: {sequence.bundle_id or '-'}",
+                f"entry: {sequence.entry_id or '-'}", f"coords: {sequence.resolved_coordinates or {}}",
+                f"sequence sha256: {(sequence.sequence_sha256 or '-')[:16]}", f"status: {sequence.status}",
+            ]))
 
         def _log(self, line: str) -> None:
             self.log.appendPlainText(line)

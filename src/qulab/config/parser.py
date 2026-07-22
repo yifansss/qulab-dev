@@ -18,10 +18,12 @@ from qulab.core import (
     Step,
     WaitStep,
 )
+from qulab.analysis import AnalysisExecutionPlan, load_analysis_plan
+from qulab.analysis.validation import collect_known_raw_keys
 from qulab.instruments import InstrumentRegistry, build_context_from_resources
 from qulab.sequence_bundles import SequenceBundle, SequenceBundleError, load_sequence_bundle
 from qulab.sequence_preflight import SequenceBundlePreflightValidator
-from qulab.sync import ExecutionOrder, SyncPlan, SyncValidationResult, SyncValidator, TriggerEdge
+from qulab.sync import ExecutionOrder, SyncPlan, SyncValidationIssue, SyncValidationResult, SyncValidator, TriggerEdge
 
 from .errors import ConfigLoadError
 from .refs import resolve_parameter_refs
@@ -37,6 +39,7 @@ class ParsedExperiment:
     sync_plan: SyncPlan | None
     validation: SyncValidationResult
     sequence_bundles: dict[str, SequenceBundle]
+    analysis_plan: AnalysisExecutionPlan | None = None
     sequence_preparation: Any = None
 
 
@@ -71,6 +74,13 @@ def parse_experiment_config(
     )
     validation = SyncValidator().validate(sync_plan, context, procedure)
     validation.issues.extend(SequenceBundlePreflightValidator().validate(sync_plan, context, procedure))
+    analysis_plan, analysis_issues = load_analysis_plan(
+        resolved_config.get("analysis"),
+        known_raw_keys=collect_known_raw_keys(procedure),
+    )
+    validation.issues.extend(
+        SyncValidationIssue(issue.severity, issue.code, issue.message) for issue in analysis_issues
+    )
     return ParsedExperiment(
         name=name,
         config=deepcopy(config),
@@ -80,6 +90,7 @@ def parse_experiment_config(
         sync_plan=sync_plan,
         validation=validation,
         sequence_bundles=sequence_bundles,
+        analysis_plan=analysis_plan,
     )
 
 

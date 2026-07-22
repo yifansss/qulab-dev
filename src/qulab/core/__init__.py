@@ -3,6 +3,8 @@
 from .context import ExperimentContext
 from .events import (
     DataPoint,
+    DerivedData,
+    AnalysisStatus,
     ErrorRaised,
     Event,
     EventBus,
@@ -35,6 +37,8 @@ __all__ = [
     "AverageStep",
     "CleanupStep",
     "DataPoint",
+    "DerivedData",
+    "AnalysisStatus",
     "ErrorRaised",
     "Event",
     "EventBus",

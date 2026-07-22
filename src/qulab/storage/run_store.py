@@ -14,6 +14,8 @@ import yaml
 
 from qulab.core import (
     DataPoint,
+    DerivedData,
+    AnalysisStatus,
     ErrorRaised,
     Event,
     LogMessage,
@@ -54,6 +56,7 @@ class RunStore:
         backends: list[str] | tuple[str, ...] | str | None = None,
         sequence_bundles: dict[str, SequenceBundle] | None = None,
         sequence_preparation: Any | None = None,
+        analysis_plan: Any | None = None,
     ) -> None:
         self.root = Path(root)
         self.experiment_name = _safe_name(experiment_name)
@@ -62,6 +65,7 @@ class RunStore:
         self.backends = normalize_storage_backends(config, resolved_config, backends)
         self.sequence_bundles = dict(sequence_bundles or {})
         self.sequence_preparation = sequence_preparation
+        self.analysis_plan = analysis_plan
         self._explicit_run_id = _safe_name(run_id) if run_id else None
         self.run_id = self._explicit_run_id or ""
         self._run_path: Path | None = None
@@ -75,6 +79,8 @@ class RunStore:
         self._sequence_selection_file: TextIO | None = None
         self._sequence_artifacts: dict[tuple[str, str, str], str] = {}
         self._is_open = False
+        self._raw_keys: set[str] = set()
+        self._derived_keys: set[str] = set()
 
     @property
     def run_path(self) -> Path:
@@ -102,6 +108,10 @@ class RunStore:
         self.metadata_writer = MetadataWriter(
             self._run_path / "metadata.json", self.run_id, self.experiment_name, started_at
         )
+        if self.analysis_plan is not None:
+            self.metadata_writer.metadata["analysis_modules"] = [
+                module.to_dict() for module in self.analysis_plan.modules
+            ]
         if self.config is not None:
             self.metadata_writer.metadata["sequence_snapshots"] = sequence_artifact_snapshots(self.config, self._run_path)
         if self.sequence_bundles:
@@ -132,10 +142,18 @@ class RunStore:
         assert self.event_writer is not None
         assert self.metadata_writer is not None
 
+        if isinstance(event, DerivedData) and not event.save:
+            return
         self.event_writer.append(event)
 
         if isinstance(event, DataPoint):
             self._handle_data_point(event)
+        elif isinstance(event, DerivedData):
+            self._handle_derived_data(event)
+        elif isinstance(event, AnalysisStatus):
+            if event.state in {"warning", "failed"}:
+                self.metadata_writer.metadata["analysis_error_count"] += 1
+                self.metadata_writer.write()
         elif isinstance(event, SequenceSelected):
             self._handle_sequence_selected(event)
         elif isinstance(event, MeasurementStarted):
@@ -181,6 +199,12 @@ class RunStore:
             self._sequence_selection_file.close()
             self._sequence_selection_file = None
         self._is_open = False
+
+    def set_analysis_summary(self, summary: dict[str, Any]) -> None:
+        if not self._is_open or self.metadata_writer is None:
+            raise RuntimeError("RunStore must be open to record analysis summary")
+        self.metadata_writer.metadata["analysis_summary"] = to_jsonable(summary)
+        self.metadata_writer.write()
 
     def _prepare_sequence_bundles(self) -> None:
         assert self.metadata_writer is not None
@@ -306,6 +330,8 @@ class RunStore:
         assert self.metadata_writer is not None
 
         payload = self.dataset_writer.append_data_point(event)
+        overlap = set(payload["data"]) & self._derived_keys
+        self._raw_keys.update(payload["data"])
         if self.advanced_writer is not None:
             self.advanced_writer.add_data_point(payload)
         specs = infer_data_specs(payload["data"])
@@ -324,6 +350,31 @@ class RunStore:
         if event.point_id and event.point_id in self._points:
             point = self._points[event.point_id]
             point.setdefault("data_keys", set()).update(payload["data"].keys())
+        if overlap:
+            raise RuntimeError(f"Raw data keys collide with previously stored derived keys: {sorted(overlap)}")
+
+    def _handle_derived_data(self, event: DerivedData) -> None:
+        assert self.dataset_writer is not None
+        assert self.metadata_writer is not None
+        collision = set(event.data) & self._raw_keys
+        if collision:
+            raise RuntimeError(f"Derived data key collision: {sorted(collision)}")
+        payload = self.dataset_writer.append_derived_data(event)
+        self._derived_keys.update(payload["data"])
+        if self.advanced_writer is not None:
+            self.advanced_writer.add_data_point(payload)
+        specs = payload["data_specs"]
+        self.metadata_writer.add_data_specs(specs)
+        self.metadata_writer.write()
+        for key, spec in specs.items():
+            self._safe_index(self.index.upsert_data_key, run_id=self.run_id, key=key,
+                             kind=spec.get("kind"), unit=spec.get("unit"), shape=spec.get("shape"),
+                             uri=f"{self.run_path.name}/data.jsonl")
+        if event.point_id and event.point_id in self._points:
+            point = self._points[event.point_id]
+            point.setdefault("data_keys", set()).update(payload["data"].keys())
+            if point.get("status") != "running":
+                self._write_point(point)
 
     def _handle_measurement_started(self, event: MeasurementStarted) -> None:
         assert self.metadata_writer is not None

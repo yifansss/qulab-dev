@@ -83,6 +83,13 @@ def _build_logical_dataset(records: list[dict[str, Any]]) -> dict[str, Any]:
                     "scan_dims": tuple(coords.keys()),
                     "records": [],
                     "shape": spec.get("shape"),
+                    "source_kind": record.get("source_kind", "raw"),
+                    "analysis_mode": record.get("analysis_mode"),
+                    "source_module": record.get("source_module"),
+                    "module_version": record.get("module_version"),
+                    "input_keys": record.get("input_keys", []),
+                    "result_id": record.get("result_id"),
+                    "input_lineage": next(iter(record.get("data_specs", {}).values()), {}).get("input_lineage", []),
                 },
             )
             var["records"].append({"point_id": record.get("point_id"), "coords": coords, "value": value})
@@ -126,7 +133,11 @@ def _build_manifest(logical: dict[str, Any], backends: list[str]) -> DatasetMani
             "unit": var.get("unit"),
             "value_column": "value",
             "backends": {},
+            "source_kind": var.get("source_kind", "raw"),
         }
+        for name in ("analysis_mode", "source_module", "module_version", "input_keys", "result_id", "input_lineage"):
+            if var.get(name) is not None:
+                entry[name] = var[name]
         if "csv" in backends:
             group = "summaries" if var["kind"] == "scalar_grid" else "traces"
             entry["backends"]["csv"] = f"tables/{group}/{key}.csv"

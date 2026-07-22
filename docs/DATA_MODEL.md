@@ -809,3 +809,10 @@ docs/LIVE_COMPUTE_DERIVED_DATA_PLAN.md
   ]
 }
 ```
+
+P10 实际存储使用明确的 `source_kind` / `analysis_mode` / `source_module` /
+`module_version` manifest attributes。Live saved outputs 与 raw 位于 run root
+dataset，但 `RunReader(group="raw"|"live")` 可分组筛选；post-run outputs 原子写入
+`analysis/<result_id>/`，并由 `analysis/history.jsonl` 记录 started/completed/failed。
+Async final metrics 保存在 `metadata.json.analysis_summary`，包括 queue capacity、
+enqueued/completed/dropped/failed、wait/end-to-end latency 和 worker state。

@@ -35,6 +35,8 @@ class MetadataWriter:
             "point_count": 0,
             "completed_point_count": 0,
             "error_count": 0,
+            "analysis_error_count": 0,
+            "analysis_modules": [],
         }
 
     def write(self) -> None:
@@ -51,6 +53,8 @@ class MetadataWriter:
                 "kind": spec.get("kind"),
                 "unit": spec.get("unit"),
                 "shape": spec.get("shape"),
+                **{name: spec.get(name) for name in ("source_kind", "analysis_mode", "source_module", "module_version")
+                   if spec.get(name) is not None},
             }
         self.metadata["data_keys"] = [by_key[key] for key in sorted(by_key)]
 

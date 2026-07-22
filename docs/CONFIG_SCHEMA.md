@@ -652,7 +652,7 @@ authoring YAML. Generic `asg_template` plans additionally accept `template`,
 blocks. Direct parsing of an unprepared macro is rejected with guidance to use
 the preparation API.
 
-当前可运行 schema 通过 `DataPoint` 保存 raw/summary data，并由 GUI 做简单 live plot。下一阶段规划会增加可选的实时计算/派生量配置，使用户可以在项目内编写计算模块，把 raw data 转换为 derived quantities，并由 Live View 和 RunStore 按配置显示/保存。
+当前 schema 已支持可选实时计算/派生量配置；没有 `analysis` 的旧配置保持原行为。
 
 规划文档：
 
@@ -661,7 +661,7 @@ docs/LIVE_COMPUTE_DERIVED_DATA_PLAN.md
 docs/SEQUENCE_LIVE_COMPUTE_GUI_INTEGRATION_PLAN.md
 ```
 
-计划中的可选顶层字段：
+可选顶层字段：
 
 ```yaml
 analysis:
@@ -675,6 +675,8 @@ analysis:
     backpressure: skip_newest
     drain_on_close: true
     drain_timeout_s: 10
+    worker_count: 1
+    status_interval_s: 0.5
 
   modules:
     - name: trace_summary
@@ -691,7 +693,7 @@ analysis:
       args: {}
 ```
 
-这些字段尚未作为当前 parser/executor 的稳定输入启用。实现时必须满足：
+这些字段已由 parser/preflight、runner 和 OperatorController 使用。`execution` 默认 `sync`；async 当前严格要求 `worker_count: 1`，queue policy 只允许 `skip_newest|skip_oldest|latest|disable_module|fail`。
 
 - Qulab core 只规定模块接口和数据流，不写死具体实验公式。
 - 用户计算模块优先放在项目内 `analysis_modules/`。

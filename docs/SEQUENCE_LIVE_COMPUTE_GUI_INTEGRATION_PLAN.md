@@ -1,8 +1,8 @@
 # Sequence Sweep and Live Compute GUI Integration Plan
 
-Status: planned. P9.3 workers may implement the Sequence Sweep authoring path
-while P10 workers implement analysis and Live View. This document defines the
-shared GUI/controller/event contracts so the two efforts converge on one panel.
+Status: implemented for P9.3/P10 headless contracts and the shared Operator
+Console pages. Sequence Sweep remains the sole authoring panel; Live Run is a
+read-only consumer of `SequenceSelected`, raw, derived, and status events.
 
 ## 1. Responsibility Split
 
@@ -267,4 +267,3 @@ stable.
   completed-run storage.
 - Sequence authoring and live analysis remain separate but coordinated views of
   the same prepared experiment.
-

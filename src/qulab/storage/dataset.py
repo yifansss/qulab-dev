@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, TextIO
 
-from qulab.core import DataPoint
+from qulab.core import DataPoint, DerivedData
 
 from .events import to_jsonable
 
@@ -62,6 +62,26 @@ class DatasetJsonlWriter:
             "metadata": to_jsonable(event.metadata),
             "data_specs": infer_data_specs(data),
             "time": event.timestamp,
+        }
+        self._file.write(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
+        self._file.flush()
+        return payload
+
+    def append_derived_data(self, event: DerivedData) -> dict[str, Any]:
+        if self._file is None:
+            raise RuntimeError("DatasetJsonlWriter is not open")
+        data = to_jsonable(event.data)
+        specs = infer_data_specs(data)
+        for key, spec in specs.items():
+            spec.update({"source_kind": "derived", "analysis_mode": event.run_mode,
+                         "source_module": event.source_module, "module_version": event.module_version,
+                         "unit": event.units.get(key)})
+        payload = {
+            "kind": "derived_data", "point_id": event.point_id, "coords": to_jsonable(event.coords),
+            "data": data, "metadata": to_jsonable(event.metadata), "quality": to_jsonable(event.quality),
+            "data_specs": specs, "source_kind": "derived", "analysis_mode": event.run_mode,
+            "source_module": event.source_module, "module_version": event.module_version,
+            "input_keys": list(event.input_keys), "time": event.timestamp,
         }
         self._file.write(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
         self._file.flush()
