@@ -8,7 +8,8 @@ from pathlib import Path
 from typing import Any
 
 from qulab.sequence_generation.preparation import parse_sequence_plans
-from qulab.sequence_generation.providers.asg_model import inspect_template
+from qulab.sequence_generation.providers.asg_model import AsgSequence, inspect_template
+from qulab.sequence_generation.providers.asg_transforms import preview_from_model
 from qulab.sequence_generation.registry import DEFAULT_PROVIDER_REGISTRY
 from qulab.sequence_generation.sampling import enumerate_plan_points, normalize_parameter_values
 from qulab.instruments.action_specs import DEFAULT_ACTION_REGISTRY as ACTION_REGISTRY
@@ -366,6 +367,12 @@ def _normalize_preview(preview: Any) -> NormalizedPreview:
                                           getattr(pulse, "label", None), getattr(pulse, "alias", None)))
     channels = tuple(dict.fromkeys(item.channel for item in pulses))
     return NormalizedPreview(tuple(pulses), channels, float(getattr(preview, "total_duration_s", 0.0)))
+
+
+def normalized_sequence_file_preview(path: str | Path) -> NormalizedPreview:
+    """Parse one concrete ASG sequence file for read-only bundle browsing."""
+    model = AsgSequence.from_path(Path(path))
+    return _normalize_preview(preview_from_model(model, {}))
 
 def _locate_issue(issue: SequenceIssueViewModel) -> LocatedSequenceIssue:
     code = issue.code

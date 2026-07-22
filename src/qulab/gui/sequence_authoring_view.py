@@ -15,6 +15,7 @@ STEP_LABELS = (
     "5 Sweep Parameters", "6 Targets & Propagation", "7 Preview & Compare",
     "8 Validate & Prepare", "9 Bundle / Workflow / Provenance",
 )
+GENERIC_STEP_INDICES = (1, 4, 5, 6, 7, 8)
 
 def create_guided_sequence_widget(QtWidgets: Any, QtCore: Any, QtGui: Any, controller: Any,
                                   *, on_config_changed: Callable[[], None] | None = None) -> Any:
@@ -32,18 +33,24 @@ def create_guided_sequence_widget(QtWidgets: Any, QtCore: Any, QtGui: Any, contr
             self.setMinimumHeight(220)
         def set_preview(self, preview: NormalizedPreview | None, comparison: NormalizedPreview | None = None,
                         *, difference: bool = False) -> None:
-            self.preview = preview; self.comparison = comparison; self.difference = difference; self.update()
+            self.preview = preview; self.comparison = comparison; self.difference = difference
+            self.setMinimumHeight(max(180, 76 + 34 * len(preview.channels) if preview else 180)); self.update()
         def paintEvent(self, event: Any) -> None:  # noqa: N802
             painter = QtGui.QPainter(self); painter.fillRect(self.rect(), QtGui.QColor("#ffffff"))
             self._pulse_rects.clear()
             preview = self.preview
             if preview is None or not preview.pulses:
                 painter.setPen(QtGui.QColor("#6b7280")); painter.drawText(self.rect(), _align_center(QtCore), "No preview available"); return
-            left, right, top, row_h = 110, max(self.width() - 20, 130), 24, 34
+            left, right, top, row_h = 110, max(self.width() - 20, 130), 38, 34
             all_pulses = preview.pulses + (self.comparison.pulses if self.comparison else ())
             duration = max(preview.duration_s, max(p.end_s for p in all_pulses), 1e-12)
             baseline = {(p.channel, p.pulse): (p.start_s, p.end_s) for p in self.comparison.pulses} if self.comparison else {}
             painter.setPen(QtGui.QColor("#64748b"))
+            axis_bottom = top + len(preview.channels) * row_h
+            for tick in range(5):
+                ratio = tick / 4; x = left + int(ratio * (right - left)); value = ratio * duration
+                painter.drawLine(x, top - 8, x, axis_bottom)
+                painter.drawText(max(left, x - 30), top - 14, _format_time(value))
             for row, channel in enumerate(preview.channels):
                 y = top + row * row_h; painter.drawText(8, y + 18, channel); painter.drawLine(left, y + 20, right, y + 20)
                 if self.comparison:
@@ -59,7 +66,6 @@ def create_guided_sequence_widget(QtWidgets: Any, QtCore: Any, QtGui: Any, contr
                     rect = QtCore.QRect(x, y + 6, width, 20); self._pulse_rects.append((rect, pulse.channel, pulse.pulse))
                     painter.fillRect(rect, QtGui.QColor(color)); painter.setPen(QtGui.QColor("#111827"))
                     painter.drawText(x + 2, y + 20, pulse.label or pulse.alias or str(pulse.pulse))
-            painter.drawText(left, 15, "0 s"); painter.drawText(max(left, right - 100), 15, f"{duration:.6g} s")
         def mousePressEvent(self, event: Any) -> None:  # noqa: N802
             position = event.position().toPoint() if hasattr(event, "position") else event.pos()
             for rect, channel, pulse in reversed(self._pulse_rects):
@@ -90,7 +96,7 @@ def create_guided_sequence_widget(QtWidgets: Any, QtCore: Any, QtGui: Any, contr
             self._build_pages()
             footer = QtWidgets.QHBoxLayout(); back = QtWidgets.QPushButton("Back"); nxt = QtWidgets.QPushButton("Next")
             validate = QtWidgets.QPushButton("Validate"); macro = QtWidgets.QPushButton("Insert / Update Macro"); self.prepare_button = QtWidgets.QPushButton("Prepare")
-            back.clicked.connect(lambda: self.steps.setCurrentRow(max(0, self.current_step - 1))); nxt.clicked.connect(lambda: self.steps.setCurrentRow(min(8, self.current_step + 1)))
+            back.clicked.connect(lambda: self.steps.setCurrentRow(max(0, self.steps.currentRow() - 1))); nxt.clicked.connect(lambda: self.steps.setCurrentRow(min(self.steps.count() - 1, self.steps.currentRow() + 1)))
             validate.clicked.connect(self.refresh); macro.clicked.connect(self._insert_macro); self.prepare_button.clicked.connect(self._prepare)
             for widget in (back, nxt, validate, macro, self.prepare_button): footer.addWidget(widget)
             footer.addStretch(1); root.addLayout(footer)
@@ -101,7 +107,7 @@ def create_guided_sequence_widget(QtWidgets: Any, QtCore: Any, QtGui: Any, contr
             self.pages.addWidget(self._preview_page()); self.pages.addWidget(self._validation_page()); self.pages.addWidget(self._provenance_page())
 
         def _mode_page(self) -> Any:
-            page = QtWidgets.QWidget(); form = QtWidgets.QFormLayout(page); self.resource_combo = QtWidgets.QComboBox(); self.mode_combo = QtWidgets.QComboBox(); self.mode_combo.addItems(["curated", "generic", "standalone"])
+            page = QtWidgets.QWidget(); form = QtWidgets.QFormLayout(page); self.resource_combo = QtWidgets.QComboBox(); self.mode_combo = QtWidgets.QComboBox(); self.mode_combo.addItems(["generic"])
             self.mode_apply = QtWidgets.QPushButton("Apply mode / resource"); self.mode_apply.clicked.connect(self._apply_mode)
             form.addRow("Pulse resource", self.resource_combo); form.addRow("Authoring mode", self.mode_combo); form.addRow(self.mode_apply); return page
 
@@ -109,7 +115,7 @@ def create_guided_sequence_widget(QtWidgets: Any, QtCore: Any, QtGui: Any, contr
             page = QtWidgets.QWidget(); form = QtWidgets.QFormLayout(page); self.provider_combo = QtWidgets.QComboBox(); self.template_line = QtWidgets.QLineEdit()
             browse = QtWidgets.QPushButton("Browse template"); browse.clicked.connect(self._browse_template); inspect = QtWidgets.QPushButton("Inspect / Apply"); inspect.clicked.connect(self._apply_source)
             self.editor_button = QtWidgets.QPushButton("Open Standalone Editor"); self.editor_button.clicked.connect(self._open_editor); self.source_status = QtWidgets.QLabel()
-            form.addRow("Curated provider", self.provider_combo); form.addRow("Template / sequence", self.template_line); form.addRow(browse, inspect); form.addRow(self.editor_button); form.addRow(self.source_status); return page
+            form.addRow("Pulse resource", self.resource_combo); form.addRow("Base sequence template", self.template_line); form.addRow(browse, inspect); form.addRow(self.source_status); return page
 
         def _roles_page(self) -> Any:
             page = QtWidgets.QWidget(); layout = QtWidgets.QVBoxLayout(page); self.roles_table = QtWidgets.QTableWidget(0, 2); self.roles_table.setHorizontalHeaderLabels(["Role", "Confirmed channel"])
@@ -153,30 +159,37 @@ def create_guided_sequence_widget(QtWidgets: Any, QtCore: Any, QtGui: Any, contr
             page = QtWidgets.QWidget(); layout = QtWidgets.QVBoxLayout(page); self.provenance = QtWidgets.QPlainTextEdit(); self.provenance.setReadOnly(True); layout.addWidget(self.provenance); return page
 
         def refresh(self) -> None:
-            try: state = controller.get_guided_sequence_state(self.selected_plan)
+            try:
+                all_state = controller.get_guided_sequence_state(self.selected_plan)
+                generic_ids = [item.id for item in all_state.plans if item.mode in {"generic", "standalone"}]
+                if not generic_ids:
+                    self.selected_plan = None; self.plan_combo.clear(); self.steps.clear(); self.state_label.setText("No generic sweep"); self.point_label.setText("0 points"); return
+                if self.selected_plan not in generic_ids: self.selected_plan = generic_ids[0]
+                state = controller.get_guided_sequence_state(self.selected_plan)
             except Exception as exc: self.validation_summary.setText(str(exc)); return
             self._state = state; self.selected_plan = state.selected_plan
-            self.plan_combo.blockSignals(True); self.plan_combo.clear(); self.plan_combo.addItems([item.id for item in state.plans])
+            self.plan_combo.blockSignals(True); self.plan_combo.clear(); self.plan_combo.addItems(generic_ids)
             if state.selected_plan: self.plan_combo.setCurrentText(state.selected_plan)
             self.plan_combo.blockSignals(False); self.state_label.setText(state.prepared_state); self.point_label.setText(f"{state.point_count or 0} points")
             self.steps.clear()
-            for index, status in enumerate(state.steps):
+            for index in GENERIC_STEP_INDICES:
+                status = state.steps[index]
                 item = QtWidgets.QListWidgetItem(STEP_LABELS[index]); item.setFlags(item.flags() | _enabled_flag(QtCore) if status.enabled else item.flags() & ~_enabled_flag(QtCore)); item.setToolTip(status.message)
+                item.setData(_user_role(QtCore), index)
                 if status.complete: item.setForeground(QtGui.QBrush(QtGui.QColor("#15803d")))
                 self.steps.addItem(item)
-            if state.steps: self.steps.setCurrentRow(min(self.current_step, len(state.steps) - 1))
+            if state.steps: self.steps.setCurrentRow(min(self.steps.currentRow() if self.steps.currentRow() >= 0 else 0, self.steps.count() - 1))
             self._fill_mode_source(); self._fill_parameters(); self._fill_roles_targets(); self._fill_issues(); self._fill_provenance()
 
         def _fill_mode_source(self) -> None:
             if not self.selected_plan: return
             resources = controller.sequence_resource_names(); self.resource_combo.clear(); self.resource_combo.addItems(resources)
-            plan = next(item for item in self._state.plans if item.id == self.selected_plan); self.resource_combo.setCurrentText(plan.resource); self.mode_combo.setCurrentText(self._state.mode or "curated")
+            plan = next(item for item in self._state.plans if item.id == self.selected_plan); self.resource_combo.setCurrentText(plan.resource); self.mode_combo.setCurrentText("generic")
             providers = [p for p in controller.list_sequence_providers() if "error" not in p and p["id"] != "asg_template"]
             self.provider_combo.clear()
             for item in providers: self.provider_combo.addItem(f"{item['label']} v{item['version']}", item["id"])
             raw = controller.current_config["sequence_plans"][self.selected_plan]; family = raw.get("family", {})
             index = self.provider_combo.findData(family.get("provider")); self.provider_combo.setCurrentIndex(max(0, index)); self.template_line.setText(str(raw.get("template") or ""))
-            self.editor_button.setVisible(self._state.mode == "standalone")
             watched = self._watcher.files()
             if watched: self._watcher.removePaths(watched)
             resolved = resolve_project_path(raw.get("template"))
@@ -239,21 +252,22 @@ def create_guided_sequence_widget(QtWidgets: Any, QtCore: Any, QtGui: Any, contr
 
         def _plan_changed(self, value: str) -> None: self.selected_plan = value or None; self.refresh()
         def _step_changed(self, row: int) -> None:
-            if row >= 0: self.current_step = row; self.pages.setCurrentIndex(row)
+            if row >= 0:
+                item = self.steps.item(row); index = item.data(_user_role(QtCore)) if item else row
+                self.current_step = int(index); self.pages.setCurrentIndex(int(index))
         def _issue_clicked(self, row: int, column: int) -> None:
             item = self.issues.item(row, column) or self.issues.item(row, 0); step = item.data(_user_role(QtCore)) if item else None
             if step in AUTHORING_STEPS: self.steps.setCurrentRow(AUTHORING_STEPS.index(step))
 
         def _new_plan(self) -> None:
-            resources = controller.sequence_resource_names(); providers = [p for p in controller.list_sequence_providers() if "error" not in p and p["id"] != "asg_template"]
+            resources = controller.sequence_resource_names()
             if not resources: return
-            dialog = QtWidgets.QDialog(self); form = QtWidgets.QFormLayout(dialog); pid = QtWidgets.QLineEdit("sequence_main"); resource = QtWidgets.QComboBox(); resource.addItems(resources); mode = QtWidgets.QComboBox(); mode.addItems(["curated", "generic", "standalone"]); provider = QtWidgets.QComboBox()
-            for p in providers: provider.addItem(p["label"], p["id"])
+            dialog = QtWidgets.QDialog(self); form = QtWidgets.QFormLayout(dialog); pid = QtWidgets.QLineEdit("sequence_main"); resource = QtWidgets.QComboBox(); resource.addItems(resources)
             template = QtWidgets.QLineEdit(); buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel); buttons.accepted.connect(dialog.accept); buttons.rejected.connect(dialog.reject)
-            for label, widget in (("Plan id", pid), ("Resource", resource), ("Mode", mode), ("Provider", provider), ("Template", template)): form.addRow(label, widget)
+            for label, widget in (("Plan id", pid), ("Resource", resource), ("Base sequence template", template)): form.addRow(label, widget)
             form.addRow(buttons)
             if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted: return
-            try: controller.create_guided_sequence_plan(pid.text().strip(), resource.currentText(), mode.currentText(), provider=provider.currentData(), template=template.text().strip() or None); self.selected_plan = pid.text().strip(); self._changed()
+            try: controller.create_guided_sequence_plan(pid.text().strip(), resource.currentText(), "generic", template=template.text().strip() or None); self.selected_plan = pid.text().strip(); self._changed()
             except Exception as exc: QtWidgets.QMessageBox.critical(self, "Create plan failed", str(exc))
 
         def _duplicate(self) -> None:
@@ -276,7 +290,9 @@ def create_guided_sequence_widget(QtWidgets: Any, QtCore: Any, QtGui: Any, contr
             if path: self.template_line.setText(path)
         def _apply_source(self) -> None:
             if not self.selected_plan: return
-            controller.change_sequence_mode(self.selected_plan, self.mode_combo.currentText(), provider=self.provider_combo.currentData(), template=self.template_line.text().strip() or None); self._changed()
+            controller.change_sequence_mode(self.selected_plan, "generic", template=self.template_line.text().strip() or None)
+            if self.resource_combo.currentText(): controller.change_sequence_resource(self.selected_plan, self.resource_combo.currentText())
+            self._changed()
         def _apply_roles(self) -> None:
             roles = {self.roles_table.item(r, 0).text(): self.roles_table.item(r, 1).text() for r in range(self.roles_table.rowCount()) if self.roles_table.item(r, 0) and self.roles_table.item(r, 1)}
             if self.selected_plan: controller.update_sequence_roles(self.selected_plan, roles, confirmed=True); self._changed()
@@ -342,6 +358,7 @@ def create_guided_sequence_widget(QtWidgets: Any, QtCore: Any, QtGui: Any, contr
         def _prepare_done(self, result: Any, error: Any) -> None:
             self.prepare_button.setEnabled(True)
             if error is not None: QtWidgets.QMessageBox.critical(self, "Prepare failed", str(error))
+            if on_config_changed: on_config_changed()
             self.refresh()
         def _open_editor(self) -> None:
             if not self.selected_plan: return
@@ -362,7 +379,87 @@ def create_guided_sequence_widget(QtWidgets: Any, QtCore: Any, QtGui: Any, contr
             if on_config_changed: on_config_changed()
             self.refresh()
 
-    return GuidedSequenceWidget()
+    class BundleBrowserWidget(QtWidgets.QWidget):
+        def __init__(self) -> None:
+            super().__init__(); self._entries: list[dict[str, Any]] = []; self._build(); self.refresh()
+
+        def _build(self) -> None:
+            layout = QtWidgets.QVBoxLayout(self); controls = QtWidgets.QHBoxLayout()
+            self.bundle_combo = QtWidgets.QComboBox(); self.bundle_combo.currentTextChanged.connect(self._bundle_changed)
+            self.compare_combo = QtWidgets.QComboBox(); self.compare_combo.addItems(["Selected entry", "Overlay first / last", "Difference first / last"]); self.compare_combo.currentIndexChanged.connect(self._show_preview)
+            self.bundle_summary = QtWidgets.QLabel("No bundle")
+            controls.addWidget(QtWidgets.QLabel("Bundle")); controls.addWidget(self.bundle_combo, 1); controls.addWidget(self.compare_combo); controls.addWidget(self.bundle_summary); layout.addLayout(controls)
+            split = QtWidgets.QSplitter(_horizontal(QtCore)); self.entry_table = QtWidgets.QTableWidget(0, 6)
+            self.entry_table.setHorizontalHeaderLabels(["Entry", "Coordinates", "Duration", "Triggers", "Sequence file", "SHA256"]); self.entry_table.horizontalHeader().setStretchLastSection(True); self.entry_table.itemSelectionChanged.connect(self._entry_changed); split.addWidget(self.entry_table)
+            detail = QtWidgets.QWidget(); detail_layout = QtWidgets.QVBoxLayout(detail); self.pulse_table = QtWidgets.QTableWidget(0, 6)
+            self.pulse_table.setHorizontalHeaderLabels(["Channel", "Pulse", "Start", "Duration", "End", "Label"]); self.pulse_table.horizontalHeader().setStretchLastSection(True)
+            self.timeline = Timeline(); self.timeline.pulseSelected.connect(self._timeline_selected); self.coordinates = QtWidgets.QLabel()
+            detail_layout.addWidget(self.coordinates); detail_layout.addWidget(self.timeline, 1); detail_layout.addWidget(self.pulse_table); split.addWidget(detail); split.setSizes([500, 760]); layout.addWidget(split, 1)
+
+        def refresh(self) -> None:
+            current = self.bundle_combo.currentText(); summaries = controller.list_sequence_bundle_summaries()
+            self.bundle_combo.blockSignals(True); self.bundle_combo.clear(); self.bundle_combo.addItems([item["id"] for item in summaries])
+            if current and self.bundle_combo.findText(current) >= 0: self.bundle_combo.setCurrentText(current)
+            self.bundle_combo.blockSignals(False); self._bundle_changed(self.bundle_combo.currentText())
+
+        def _bundle_changed(self, bundle_id: str) -> None:
+            self._entries = list(controller.list_sequence_bundle_entries(bundle_id)) if bundle_id else []
+            self.entry_table.setRowCount(0)
+            for entry in self._entries:
+                row = self.entry_table.rowCount(); self.entry_table.insertRow(row); metadata = entry.get("metadata", {})
+                values = (entry["id"], yaml.safe_dump(entry.get("coordinates", {}), default_flow_style=True).strip(), metadata.get("duration_s", ""), ", ".join(map(str, metadata.get("trigger_channels", ()))), entry.get("sequence_file", ""), str(entry.get("sha256", ""))[:12])
+                for column, value in enumerate(values): self.entry_table.setItem(row, column, QtWidgets.QTableWidgetItem(str(value)))
+            summary = next((item for item in controller.list_sequence_bundle_summaries() if item["id"] == bundle_id), None)
+            self.bundle_summary.setText("No bundle" if summary is None else f"{summary['entry_count']} entries · {', '.join(summary['coordinates']) or 'no coordinates'}")
+            if self._entries: self.entry_table.selectRow(0)
+            else: self.timeline.set_preview(None); self.pulse_table.setRowCount(0)
+
+        def _entry_changed(self) -> None: self._show_preview()
+
+        def _show_preview(self) -> None:
+            if not self._entries: return
+            row = max(0, self.entry_table.currentRow()); selected = self._entries[row]
+            try:
+                preview = controller.preview_sequence_bundle_entry(self.bundle_combo.currentText(), selected["id"])
+                comparison = None; difference = False
+                if self.compare_combo.currentIndex() > 0 and len(self._entries) > 1:
+                    preview = controller.preview_sequence_bundle_entry(self.bundle_combo.currentText(), self._entries[-1]["id"])
+                    comparison = controller.preview_sequence_bundle_entry(self.bundle_combo.currentText(), self._entries[0]["id"])
+                    difference = self.compare_combo.currentIndex() == 2
+                self.timeline.set_preview(preview, comparison, difference=difference); self.coordinates.setText(yaml.safe_dump(selected.get("coordinates", {}), default_flow_style=True).strip())
+                self._fill_pulses(preview)
+            except Exception as exc:
+                self.coordinates.setText(str(exc)); self.timeline.set_preview(None); self.pulse_table.setRowCount(0)
+
+        def _fill_pulses(self, preview: NormalizedPreview) -> None:
+            self.pulse_table.setRowCount(0)
+            for pulse in preview.pulses:
+                row = self.pulse_table.rowCount(); self.pulse_table.insertRow(row)
+                for column, value in enumerate((pulse.channel, pulse.pulse, _format_time(pulse.start_s), _format_time(pulse.duration_s), _format_time(pulse.end_s), pulse.label or pulse.alias or "")):
+                    self.pulse_table.setItem(row, column, QtWidgets.QTableWidgetItem(str(value)))
+
+        def _timeline_selected(self, channel: str, pulse: int) -> None:
+            for row in range(self.pulse_table.rowCount()):
+                if self.pulse_table.item(row, 0).text() == channel and int(self.pulse_table.item(row, 1).text()) == pulse:
+                    self.pulse_table.selectRow(row); break
+
+    class SequenceWorkspaceWidget(QtWidgets.QTabWidget):
+        def __init__(self) -> None:
+            super().__init__(); self.bundle_browser = BundleBrowserWidget(); self.generic_sweep = GuidedSequenceWidget()
+            self.addTab(self.bundle_browser, "Bundle Browser"); self.addTab(self.generic_sweep, "Generic Sweep")
+            for name in (
+                "steps", "pages", "plan_combo", "timeline", "pulse_table", "sweep_parameter_table",
+                "fixed_parameter_table", "sampling_order", "resource_combo", "mode_combo", "editor_button",
+                "template_line", "property_combo", "propagation_combo", "target_alias", "target_parameter",
+                "issues", "preview_choice",
+                "_apply_mode", "_apply_parameters", "_refresh_preview", "_insert_macro", "_apply_target",
+                "_issue_clicked", "_move_sampling", "_editor_done",
+            ):
+                if hasattr(self.generic_sweep, name): setattr(self, name, getattr(self.generic_sweep, name))
+        def refresh(self) -> None:
+            self.bundle_browser.refresh(); self.generic_sweep.refresh()
+
+    return SequenceWorkspaceWidget()
 
 def _scalar(text: str) -> Any:
     value = yaml.safe_load(text)
@@ -372,6 +469,12 @@ def _list_value(text: str) -> list[Any]:
     value = yaml.safe_load(text if text.strip().startswith("[") else f"[{text}]")
     if not isinstance(value, list) or not value: raise ValueError("Explicit values require a non-empty list")
     return value
+def _format_time(value: float) -> str:
+    absolute = abs(value)
+    if absolute < 1e-6: return f"{value * 1e9:.3g} ns"
+    if absolute < 1e-3: return f"{value * 1e6:.3g} us"
+    if absolute < 1: return f"{value * 1e3:.3g} ms"
+    return f"{value:.3g} s"
 def _horizontal(QtCore: Any) -> Any:
     return getattr(getattr(QtCore.Qt, "Orientation", QtCore.Qt), "Horizontal")
 def _align_center(QtCore: Any) -> Any:

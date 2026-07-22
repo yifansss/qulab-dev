@@ -5,10 +5,23 @@ import pytest
 import yaml
 
 from qulab.config import ConfigLoadError, parse_experiment_config
+from qulab.gui.controller import OperatorController
 
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = "configs/sequences/examples/rabi_tau_bundle/manifest.yaml"
+
+
+def test_controller_bundle_browser_lists_entries_and_pulse_previews(tmp_path) -> None:
+    controller = OperatorController(tmp_path / "runs")
+    result = controller.load_config(ROOT / "configs/experiments/dry_run_rabi_sequence_bundle.yaml")
+    assert result.activated
+    summaries = controller.list_sequence_bundle_summaries()
+    assert summaries[0]["id"] == "rabi_tau" and summaries[0]["entry_count"] == 3
+    entries = controller.list_sequence_bundle_entries("rabi_tau")
+    assert [entry["id"] for entry in entries] == ["tau_20ns", "tau_40ns", "tau_60ns"]
+    preview = controller.preview_sequence_bundle_entry("rabi_tau", "tau_20ns")
+    assert preview.pulses and preview.duration_s > 0
 
 
 def _config() -> dict:

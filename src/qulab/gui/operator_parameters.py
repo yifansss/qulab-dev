@@ -345,7 +345,7 @@ def _walk_steps(steps: list[Any], path: tuple[PathPart, ...], section: str):
             continue
         step_path = (*path, index)
         yield step_path, step, section
-        for kind in ("scan", "average", "measurement"):
+        for kind in ("scan", "average", "measurement", "sequence_sweep"):
             payload = step.get(kind)
             if isinstance(payload, dict) and isinstance(payload.get("body"), list):
                 yield from _walk_steps(payload["body"], (*step_path, kind, "body"), section)

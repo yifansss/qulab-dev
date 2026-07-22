@@ -14,25 +14,23 @@ def _app():
     return QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
 
-def test_guided_widget_has_one_nine_step_workflow_and_dynamic_rabi_fields(tmp_path: Path) -> None:
+def test_sequence_workspace_has_bundle_browser_and_six_step_generic_sweep(tmp_path: Path) -> None:
     from qulab.gui.controller import OperatorController
     from qulab.gui.sequence_authoring_view import create_guided_sequence_widget
 
     _app(); controller = OperatorController(tmp_path / "runs")
-    controller.load_config(ROOT / "configs/experiments/dry_run_rabi_sequence_family.yaml")
+    controller.load_config(ROOT / "configs/experiments/dry_run_generic_asg_template_sweep.yaml")
     controller.config["resources"]["asg_backup"] = dict(controller.config["resources"]["asg"])
     widget = create_guided_sequence_widget(QtWidgets, QtCore, QtGui, controller)
-    assert widget.steps.count() == 9
+    assert [widget.tabText(index) for index in range(widget.count())] == ["Bundle Browser", "Generic Sweep"]
+    assert widget.steps.count() == 6
     assert widget.pages.count() == 9
     names = {widget.fixed_parameter_table.item(row, 0).text() for row in range(widget.fixed_parameter_table.rowCount())}
     names |= {widget.sweep_parameter_table.item(row, 0).text() for row in range(widget.sweep_parameter_table.rowCount())}
-    assert {item.name for item in controller.sequence_authoring().parameter_fields("rabi")} == names
+    assert {item.name for item in controller.sequence_authoring().parameter_fields("generic_rabi")} == names
     assert "tau_s" in names
-    period_row = next(row for row in range(widget.fixed_parameter_table.rowCount())
-                      if widget.fixed_parameter_table.item(row, 0).text() == "sequence_period_s")
-    assert widget.fixed_parameter_table.cellWidget(period_row, 1).count() == 1
-    widget.resource_combo.setCurrentText("asg_backup"); widget._apply_mode()
-    assert controller.current_config["sequence_plans"]["rabi"]["resource"] == "asg_backup"
+    widget.resource_combo.setCurrentText("asg_backup"); widget.generic_sweep._apply_source()
+    assert controller.current_config["sequence_plans"]["generic_rabi"]["resource"] == "asg_backup"
 
 
 def test_guided_parameter_interaction_updates_shared_config_and_preview(tmp_path: Path) -> None:
@@ -40,7 +38,7 @@ def test_guided_parameter_interaction_updates_shared_config_and_preview(tmp_path
     from qulab.gui.sequence_authoring_view import create_guided_sequence_widget
 
     _app(); controller = OperatorController(tmp_path / "runs")
-    controller.load_config(ROOT / "configs/experiments/dry_run_rabi_sequence_family.yaml")
+    controller.load_config(ROOT / "configs/experiments/dry_run_generic_asg_template_sweep.yaml")
     widget = create_guided_sequence_widget(QtWidgets, QtCore, QtGui, controller)
     row = next(row for row in range(widget.sweep_parameter_table.rowCount())
                if widget.sweep_parameter_table.item(row, 0).text() == "tau_s")
@@ -49,7 +47,7 @@ def test_guided_parameter_interaction_updates_shared_config_and_preview(tmp_path
     widget.sweep_parameter_table.item(row, 4).setText("6e-8")
     widget.sweep_parameter_table.item(row, 5).setText("3")
     widget._apply_parameters()
-    raw = controller.current_config["sequence_plans"]["rabi"]["parameters"]["tau_s"]
+    raw = controller.current_config["sequence_plans"]["generic_rabi"]["parameters"]["tau_s"]
     assert raw["mode"] == "linspace" and raw["points"] == 3
     widget._refresh_preview()
     assert widget.timeline.preview is not None and widget.timeline.preview.pulses
@@ -71,22 +69,15 @@ def test_generic_operations_come_from_model_and_macro_updates_workflow(tmp_path:
     assert after == before  # existing macro is updated/reused, never duplicated
 
 
-def test_mode_change_cancel_and_confirm_are_transactional(tmp_path: Path, monkeypatch) -> None:
+def test_generic_sweep_exposes_no_curated_or_standalone_mode(tmp_path: Path, monkeypatch) -> None:
     from qulab.gui.controller import OperatorController
     from qulab.gui.sequence_authoring_view import create_guided_sequence_widget
 
     _app(); controller = OperatorController(tmp_path / "runs")
-    controller.load_config(ROOT / "configs/experiments/dry_run_rabi_sequence_family.yaml")
+    controller.load_config(ROOT / "configs/experiments/dry_run_generic_asg_template_sweep.yaml")
     widget = create_guided_sequence_widget(QtWidgets, QtCore, QtGui, controller)
-    before = controller.current_config
-    widget.mode_combo.setCurrentText("generic")
-    widget.template_line.setText("configs/sequences/examples/generic_rabi_base.json")
-    monkeypatch.setattr(QtWidgets.QMessageBox, "question", lambda *args: QtWidgets.QMessageBox.StandardButton.No)
-    widget._apply_mode()
-    assert controller.current_config == before
-    monkeypatch.setattr(QtWidgets.QMessageBox, "question", lambda *args: QtWidgets.QMessageBox.StandardButton.Yes)
-    widget._apply_mode()
-    assert controller.sequence_authoring().mode("rabi") == "generic"
+    assert [widget.mode_combo.itemText(index) for index in range(widget.mode_combo.count())] == ["generic"]
+    assert not widget.editor_button.isVisible()
 
 
 def test_generic_pulse_binding_and_issue_navigation(tmp_path: Path) -> None:
@@ -117,7 +108,7 @@ def test_existing_operator_window_uses_only_guided_sequence_tab(tmp_path: Path) 
     labels = [window.submode_tabs.tabText(index) for index in range(window.submode_tabs.count())]
     assert sum("Sequence Sweep" in label for label in labels) == 1
     assert window.submode_tabs.widget(labels.index(next(label for label in labels if "Sequence Sweep" in label))) is window.guided_sequence_widget
-    assert window.guided_sequence_widget.steps.count() == 9
+    assert window.guided_sequence_widget.count() == 2
     window.close()
 
 
