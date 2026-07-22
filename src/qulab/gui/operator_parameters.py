@@ -294,6 +294,17 @@ def _resolve_source(raw_config: dict[str, Any], source: str) -> tuple[tuple[Path
     if source.startswith("sequence_plans."):
         path = tuple(source.split("."))
         return path, None if _path_exists(raw_config, path) else f"Sequence plan source not found: {source}"
+    match = re.fullmatch(r"analysis\.modules\[([^\]]+)\]\.args\.([A-Za-z_][A-Za-z0-9_]*)", source)
+    if match:
+        module_name, argument = match.groups()
+        modules = raw_config.get("analysis", {}).get("modules", [])
+        if isinstance(modules, list):
+            for index, module in enumerate(modules):
+                if not isinstance(module, dict) or str(module.get("name")) != module_name:
+                    continue
+                path = ("analysis", "modules", index, "args", argument)
+                return path, None if _path_exists(raw_config, path) else f"Analysis argument source not found: {source}"
+        return None, f"Analysis module source not found: {source}"
     match = re.fullmatch(r"(setup|procedure|cleanup)\.call\[([^\]]+)\]\.args\.([A-Za-z_][A-Za-z0-9_]*)", source)
     if match:
         section, action, arg = match.groups()

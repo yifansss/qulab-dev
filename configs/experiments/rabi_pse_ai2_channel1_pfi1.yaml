@@ -132,8 +132,10 @@ analysis:
         channel_index: 0
         signal_record: 0
         reference_record: 1
-        sample_start: 0
-        sample_stop: 1000
+        signal_sample_start: 0
+        signal_sample_stop: 1000
+        reference_sample_start: 0
+        reference_sample_stop: 1000
         denominator_epsilon: 1.0e-12
 
 operator_parameters:
@@ -143,6 +145,10 @@ operator_parameters:
   - {name: ai_start_trigger, label: AI start trigger, source: "procedure.call[daq.configure_ai_external_trigger].args.start_trigger"}
   - {name: ai_trigger_count, label: Traces per sequence, source: "procedure.call[daq.configure_ai_external_trigger].args.trigger_count", widget: integer, min: 1}
   - {name: ai_read_timeout, label: AI read timeout, unit: s, source: "procedure.call[daq.read_analog_traces].args.timeout", widget: number, min: 0.1}
+  - {name: signal_sample_start, label: Signal integration start, unit: sample, source: "analysis.modules[two_trace_ratio].args.signal_sample_start", widget: integer, min: 0}
+  - {name: signal_sample_stop, label: Signal integration stop, unit: sample, source: "analysis.modules[two_trace_ratio].args.signal_sample_stop", widget: integer, min: 1}
+  - {name: reference_sample_start, label: Reference integration start, unit: sample, source: "analysis.modules[two_trace_ratio].args.reference_sample_start", widget: integer, min: 0}
+  - {name: reference_sample_stop, label: Reference integration stop, unit: sample, source: "analysis.modules[two_trace_ratio].args.reference_sample_stop", widget: integer, min: 1}
 
 plot:
   - {type: line, x: tau_s, y: fluorescence_ratio}
