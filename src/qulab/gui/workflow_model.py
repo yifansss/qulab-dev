@@ -139,6 +139,10 @@ def _step_to_node(step: dict[str, Any], path: Path) -> WorkflowNode:
         label = f"measurement {data.get('name', 'measurement')}"
     elif kind == "run":
         label = f"run {data.get('name', 'run')}"
+    elif kind == "wait":
+        label = f"wait {data.get('duration_s', 0.1)} s"
+    elif kind == "sequence_sweep":
+        label = f"sequence sweep {data.get('plan', 'sequence_plan')}"
     elif kind == "cleanup":
         label = f"cleanup {data.get('name', 'cleanup')}"
     else:
@@ -153,14 +157,14 @@ def _step_to_node(step: dict[str, Any], path: Path) -> WorkflowNode:
 
 
 def _step_kind(step: dict[str, Any]) -> str:
-    for kind in ("call", "scan", "average", "measurement", "run", "cleanup"):
+    for kind in ("call", "scan", "average", "measurement", "run", "wait", "cleanup", "sequence_sweep"):
         if kind in step:
             return kind
     return "unknown"
 
 
 def _child_list_path(step: dict[str, Any], path: Path, kind: str) -> Path | None:
-    if kind in {"scan", "average", "measurement"}:
+    if kind in {"scan", "average", "measurement", "sequence_sweep"}:
         return (*path, kind, "body")
     if kind == "run":
         key = "steps" if "steps" in step.get("run", {}) else "body"
@@ -172,7 +176,7 @@ def _child_list_path(step: dict[str, Any], path: Path, kind: str) -> Path | None
 
 
 def _step_list_from_step(step: dict[str, Any], kind: str) -> list[dict[str, Any]]:
-    if kind in {"scan", "average", "measurement"}:
+    if kind in {"scan", "average", "measurement", "sequence_sweep"}:
         return step.get(kind, {}).get("body", [])
     if kind == "run":
         payload = step.get("run", {})

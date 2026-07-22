@@ -628,6 +628,36 @@ class OperatorController:
             self._workflow_composer = WorkflowComposerModel(self.config)
         return self._workflow_composer
 
+    def configure_guided_scan(self, target_id: str, name: str, values: dict[str, Any] | list[Any]):
+        target = self.workflow_composer().configure_scan_target(target_id, name, values)
+        if target.kind == "sequence" and target.plan_id is not None:
+            self.sequence_authoring().insert_or_update_macro(target.plan_id)
+            self._sequence_model()._edited(target.plan_id)
+            self._sequence_prepared_revisions.pop(target.plan_id, None)
+        self.parsed = None
+        return target
+
+    def insert_guided_action(
+        self, resource: str, action: Any, values: dict[str, Any], parent: WorkflowPath, save_as: str | None = None
+    ) -> WorkflowPath:
+        section = str(parent[0])
+        if section not in action.allowed_sections:
+            raise ValueError(f"{resource}.{action.method} is not allowed in the {section} section")
+        path = self.workflow_composer().insert_action(resource, action, values, parent, save_as=save_as)
+        self.parsed = None
+        return path
+
+    def insert_guided_structure(self, kind: str, parent: WorkflowPath) -> WorkflowPath:
+        path = self.workflow_composer().insert_structural_step(kind, parent)
+        self.parsed = None
+        return path
+
+    def apply_workflow_recipe(self, name: str) -> None:
+        self.workflow_composer().apply_recipe(name)
+        self.sequence_sweep_model = None
+        self._sequence_authoring = None
+        self.parsed = None
+
     def sequence_authoring(self) -> SequenceAuthoringModel:
         self._require_config()
         assert self.config is not None

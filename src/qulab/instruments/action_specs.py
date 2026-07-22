@@ -115,7 +115,22 @@ for name in ("mock_microwave", "mock_microwave_source", "pycontrol_lmx"): DEFAUL
 for name in ("mock_pulse_sequencer", "mock_asg", "pycontrol_asg"): DEFAULT_ACTION_REGISTRY.register(AdapterSpec(name, ("pulse_sequencer", "trigger_source"), PULSE))
 for name in ("mock_daq_counter", "mock_daq"): DEFAULT_ACTION_REGISTRY.register(AdapterSpec(name, ("daq_counter", "analog_input", "trigger_receiver"), DAQ))
 DEFAULT_ACTION_REGISTRY.register(AdapterSpec("mock_analog_io", ("analog_input", "analog_output"), tuple(a for a in DAQ if a.method in {"configure_ai", "read_analog", "set_voltage", "set_waveform"})))
-ni_extra = tuple(_a(n, "daq_counter", unknown=True, provides=("configured",)) for n in ("configure_counter_external_clock", "configure_ai_external_trigger", "configure_ao_ai_sync", "configure_ao_ai_step_and_sample", "configure_point_readout")) + (_a("wait_settle", "analog_output", arguments=(N("seconds", required=True, minimum=0),)),)
+ni_ai_external = _a(
+    "configure_ai_external_trigger",
+    "analog_input",
+    arguments=(
+        ArgumentSpec("channels", "list", required=True, description="Physical NI analog input channels, for example ai2."),
+        N("sample_rate", required=True, unit="Hz", minimum=1, description="Samples acquired per second in each triggered record."),
+        I("samples", required=True, minimum=1, description="Hardware samples acquired after every trigger."),
+        S("start_trigger", required=True, description="External start trigger terminal, for example PFI1."),
+        A("sample_clock", default=None, allow_reference=False, description="Optional external sample clock; keep null for the NI internal clock."),
+        ArgumentSpec("edge", "string", default="rising", choices=("rising", "falling")),
+        ArgumentSpec("terminal_config", "string", default="DIFF", choices=("DEFAULT", "RSE", "NRSE", "DIFF", "PSEUDODIFFERENTIAL")),
+        I("trigger_count", default=1, minimum=1, description="Number of retriggers/records expected from one sequence."),
+    ),
+    provides=("configured",),
+)
+ni_extra = tuple(_a(n, "daq_counter", unknown=True, provides=("configured",)) for n in ("configure_counter_external_clock", "configure_ao_ai_sync", "configure_ao_ai_step_and_sample", "configure_point_readout")) + (ni_ai_external, _a("wait_settle", "analog_output", arguments=(N("seconds", required=True, minimum=0),)))
 DEFAULT_ACTION_REGISTRY.register(AdapterSpec("pycontrol_ni", ("daq_counter", "analog_input", "analog_output", "trigger_receiver"), DAQ + ni_extra))
 DEFAULT_ACTION_REGISTRY.register(AdapterSpec("pycontrol_awg", ("waveform_generator", "trigger_receiver"), (_a("upload_waveform", "waveform_generator", arguments=(S("name", required=True), A("data", required=True), N("sample_rate")), provides=("sequence_loaded",)), _a("play", "waveform_generator", arguments=(S("name", required=True),), phase="start", safety="output", provides=("running",), connected=True), _a("stop", "waveform_generator", phase="cleanup", safety="output", invalidates=("running",)), _a("configure_trigger_input", "trigger_receiver", arguments=(S("channel", required=True), ArgumentSpec("edge", "string", default="rising", choices=("rising", "falling"))), provides=("configured",)), _a("arm", "trigger_receiver", phase="arm", requires=("configured",), provides=("armed",), connected=True))))
 

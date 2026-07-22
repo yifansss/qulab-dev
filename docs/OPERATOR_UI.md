@@ -426,6 +426,18 @@ PYTHONPATH=src python -m qulab.gui.pyqt_operator_app
 - Live Run 已接入 raw/derived catalog、saved/live-only/waiting/error 状态、line/heatmap/trace selection model、module queue/latency 状态和只读 sequence context；公式仍只存在于 analysis modules。
 - Guided Sequence 的 preview/validate 不连接硬件，只有显式 Prepare 才 materialize bundle；物理 trigger cable/output safety 仍必须在实验台确认。Windows 125% scaling 与真实 standalone editor 生命周期仍需按 manual acceptance 表做现场复核。
 
+### Guided Workflow Composer
+
+`Builder Workflow` 默认打开 `Guided Composer`，同页的 `Advanced Tree` 保留原始树和 Inspector。Guided Composer 始终编辑同一份 canonical config，不建立第二套 workflow。
+
+- `Start from recipe` 用安全关闭输出的可编辑实验模板建立完整骨架。
+- `Add Workflow Block` 将 Measurement、Average、Run 或 Wait 放入 Setup、Procedure、Cleanup 或已有容器。
+- `Add Instrument Action` 从 resource adapter 的 ActionSpec 自动生成参数表单，并只显示目标 section 允许的 action。
+- `Add Scan` 只列出当前配置中可绑定的具体目标。普通 action 参数会被自动包入 scan 并替换成作用域引用；Sequence 参数写回 `sequence_plans` 并自动插入或更新唯一的 `sequence_sweep` 宏。
+- 右侧 canonical outline 和 continuity checks 在每次编辑后刷新；Sequence Sweep、Operator Parameters 和 Advanced Tree 同步看到修改。
+
+NI retriggerable finite acquisition 的每次硬件 record 长度相同。双窗口 Rabi/ESR 通过 analysis module 分别设置 signal/reference 的 sample start/stop，从相同长度的两条原始 trace 中使用不同积分点数；原始 trace 仍完整保存。
+
 Live View renderer 按 pyqtgraph、Matplotlib、原生 Qt 的顺序 fallback，并与 Data Viewer 共用入口。Pause/clear 只暂停重绘或清空有界显示 buffer，采集与 RunStore 不受影响。无显式 trace 轴时使用 `sample_index`。硬件实验台启动前可先运行 `configs/experiments/live_view_showcase.yaml`，详见 `docs/LIVE_VIEW.md`。
 
 P9/P10 GUI 汇合规划见 `docs/SEQUENCE_LIVE_COMPUTE_GUI_INTEGRATION_PLAN.md`：

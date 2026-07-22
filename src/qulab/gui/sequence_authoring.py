@@ -260,7 +260,7 @@ class SequenceAuthoringModel:
             required = {f"{resource}.compile_sequence", f"{resource}.arm", f"{resource}.start"}
             missing = sorted(required - calls)
             if missing: issues.append(SequenceIssueViewModel("error", "sequence_workflow_actions_missing", f"Sequence workflow is missing: {', '.join(missing)}"))
-            if not any(call.endswith((".read", ".read_counts", ".read_analog")) for call in calls):
+            if not any(call.endswith((".read", ".read_counts", ".read_counts_binned", ".read_counts_trace", ".read_analog", ".read_analog_traces")) for call in calls):
                 issues.append(SequenceIssueViewModel("error", "sequence_workflow_read_missing", "Sequence workflow has no acquisition read action."))
         options = raw.get("options", {}) if isinstance(raw.get("options"), dict) else {}
         trigger_channels = {_normalize_channel(str(item)) for item in options.get("trigger_channels", ())}
@@ -280,10 +280,11 @@ class SequenceAuthoringModel:
         return issues
 
     def insert_or_update_macro(self, plan_id: str, parent: tuple[str | int, ...] = ("procedure",), index: int | None = None) -> tuple[str | int, ...]:
-        entry = _canonical_sequence_sweep_entry(self.config, plan_id, str(self._raw(plan_id).get("resource")))
         for path, step in _walk(self.config.get("procedure", []), ("procedure",)):
             if isinstance(step.get("sequence_sweep"), dict) and step["sequence_sweep"].get("plan") == plan_id:
-                step.clear(); step.update(entry); self.sweep._edited(plan_id); return path
+                self.sweep._edited(plan_id)
+                return path
+        entry = _canonical_sequence_sweep_entry(self.config, plan_id, str(self._raw(plan_id).get("resource")))
         target: Any = self.config
         for part in parent: target = target[part]
         insertion = len(target) if index is None else index; target.insert(insertion, entry)
@@ -305,7 +306,7 @@ def _walk(steps: Any, path: tuple[str | int, ...]):
     for index, step in enumerate(steps):
         if not isinstance(step, dict): continue
         p = (*path, index); yield p, step
-        for kind in ("scan", "average", "measurement", "run", "cleanup"):
+        for kind in ("scan", "average", "measurement", "run", "cleanup", "sequence_sweep"):
             payload = step.get(kind)
             if isinstance(payload, dict):
                 key = "steps" if kind in {"run", "cleanup"} and "steps" in payload else "body"
@@ -351,12 +352,23 @@ def _canonical_sequence_sweep_entry(config: dict[str, Any], plan_id: str, resour
     if acquisition is not None: run_steps.append({"call": f"{acquisition}.arm"})
     run_steps.extend(({"call": f"{resource}.arm"}, {"call": f"{resource}.start"}))
     if acquisition is not None:
-        adapter = str(config.get("resources", {}).get(acquisition, {}).get("adapter") or "")
-        read = next((item.method for item in ACTION_REGISTRY.list_actions(adapter)
-                     if item.phase == "read" and item.returns is not None), "read_counts")
-        run_steps.append({"call": f"{acquisition}.{read}", "save_as": "counts"})
+        read = _acquisition_read_method(config, acquisition)
+        save_as = "fluorescence_traces" if read == "read_analog_traces" else "analog" if read == "read_analog" else "counts"
+        run_steps.append({"call": f"{acquisition}.{read}", "save_as": save_as})
     body.append({"run": {"name": f"{plan_id}_run", "timeout_s": 10.0, "steps": run_steps}})
     return {"sequence_sweep": {"plan": plan_id, "body": [{"measurement": {"name": f"{plan_id}_point", "body": body}}]}}
+
+def _acquisition_read_method(config: dict[str, Any], resource: str) -> str:
+    configure_calls = {
+        str(step.get("call", "")).split(".", 1)[1]
+        for _, step in _walk([*config.get("setup", []), *config.get("procedure", [])], ("workflow",))
+        if str(step.get("call", "")).startswith(f"{resource}.")
+    }
+    if "configure_ai_external_trigger" in configure_calls:
+        return "read_analog_traces"
+    if "configure_ai" in configure_calls:
+        return "read_analog"
+    return "read_counts"
 
 def _normalize_preview(preview: Any) -> NormalizedPreview:
     pulses: list[NormalizedPulse] = []

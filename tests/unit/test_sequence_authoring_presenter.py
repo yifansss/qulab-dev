@@ -29,7 +29,7 @@ def test_guided_create_macro_prepare_and_provenance(tmp_path: Path) -> None:
     controller.update_sequence_plan_parameter("rabi_gui", "tau_s", {"mode": "explicit", "values": [20e-9, 40e-9, 60e-9], "unit": "s"})
     macro_path = controller.insert_sequence_macro("rabi_gui")
     assert macro_path == ("procedure", 0)
-    assert controller.workflow_tree().children[1].children[0].kind == "unknown"  # macro remains authoring-only until Prepare
+    assert controller.workflow_tree().children[1].children[0].kind == "sequence_sweep"
     revision = controller.get_guided_sequence_state("rabi_gui").revision
     view = controller.prepare_sequence_plan("rabi_gui", expected_revision=revision)
     assert view.ok

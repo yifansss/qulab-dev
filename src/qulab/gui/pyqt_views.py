@@ -20,6 +20,7 @@ from .sequence_bridge import default_sequence_editor_path, open_sequence_editor
 from .sequence_authoring_view import create_guided_sequence_widget
 from .theme import classic_qt_stylesheet
 from .workflow_model import WorkflowNode, make_default_step
+from .workflow_composer_view import create_guided_workflow_widget
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -297,11 +298,17 @@ if QT_AVAILABLE:
             tabs = QtWidgets.QTabWidget()
             tabs.addTab(self._build_operator_parameters_panel(), "Operator Parameters / 操作参数")
             tabs.addTab(self._build_sequence_sweep_panel(), "Sequence Sweep / 序列扫描")
-            builder = QtWidgets.QSplitter(_horizontal())
-            builder.addWidget(self._build_workflow_panel())
-            builder.addWidget(self._build_inspector_panel())
-            builder.setSizes([470, 450])
-            tabs.addTab(builder, "Builder Workflow / 流程编辑")
+            workflow_modes = QtWidgets.QTabWidget()
+            self.guided_workflow_widget = create_guided_workflow_widget(
+                QtWidgets, self.controller, on_config_changed=self._guided_workflow_changed
+            )
+            workflow_modes.addTab(self.guided_workflow_widget, "Guided Composer / 引导式编辑")
+            advanced_builder = QtWidgets.QSplitter(_horizontal())
+            advanced_builder.addWidget(self._build_workflow_panel())
+            advanced_builder.addWidget(self._build_inspector_panel())
+            advanced_builder.setSizes([470, 450])
+            workflow_modes.addTab(advanced_builder, "Advanced Tree / 高级树编辑")
+            tabs.addTab(workflow_modes, "Builder Workflow / 流程编辑")
             direct = self._panel("Direct Control / 直接控制")
             layout = QtWidgets.QVBoxLayout(direct)
             layout.setContentsMargins(10, 24, 10, 10)
@@ -328,6 +335,13 @@ if QT_AVAILABLE:
         def _guided_sequence_changed(self) -> None:
             self._refresh_operator_parameters()
             self._refresh_tree()
+            if hasattr(self, "guided_workflow_widget"):
+                self.guided_workflow_widget.refresh()
+
+        def _guided_workflow_changed(self) -> None:
+            self._refresh_tree()
+            self._refresh_operator_parameters()
+            self._refresh_sequence_sweep()
 
         def _build_legacy_sequence_sweep_panel(self) -> QtWidgets.QWidget:
             """Deprecated implementation retained temporarily for downstream subclasses."""
@@ -756,6 +770,8 @@ if QT_AVAILABLE:
             for node in root.children:
                 self.workflow_tree.addTopLevelItem(self._tree_item(node))
             self.workflow_tree.expandAll()
+            if hasattr(self, "guided_workflow_widget"):
+                self.guided_workflow_widget.refresh()
 
         def _tree_item(self, node: WorkflowNode) -> Any:
             item = QtWidgets.QTreeWidgetItem([node.label, node.kind, "yes" if node.enabled else "no"])
@@ -961,7 +977,7 @@ if QT_AVAILABLE:
                 return ("procedure",)
             if node.kind in {"setup", "procedure", "cleanup"}:
                 return node.path
-            if node.kind in {"scan", "average", "measurement"}:
+            if node.kind in {"scan", "average", "measurement", "sequence_sweep"}:
                 return (*node.path, node.kind, "body")
             if node.kind == "run":
                 return (*node.path, "run", "steps")

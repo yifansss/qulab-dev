@@ -1,5 +1,6 @@
 """Schema-driven, Qt-free workflow composition over canonical config mappings."""
 from __future__ import annotations
+import json
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +28,17 @@ class RenamePreview:
     old_name: str
     new_name: str
     references: tuple[WorkflowPath, ...]
+
+@dataclass(frozen=True)
+class ScanTarget:
+    id: str
+    label: str
+    group: str
+    description: str
+    unit: str | None
+    path: WorkflowPath
+    kind: str
+    plan_id: str | None = None
 
 STRUCTURAL_KINDS = ("scan", "average", "measurement", "run", "wait", "cleanup", "sequence_sweep")
 RECIPE_FILES = {
@@ -68,6 +80,79 @@ class WorkflowComposerModel:
                 haystack = f"{item.label} {action.method} {action.capability}".lower()
                 if not query or query in haystack: result.append(item)
         return tuple(result)
+
+    def list_scan_targets(self) -> tuple[ScanTarget, ...]:
+        """Return only concrete parameters that this config can safely bind to a scan."""
+        targets: list[ScanTarget] = []
+        plans = self.config.get("sequence_plans", {})
+        if isinstance(plans, dict):
+            for plan_id, plan in plans.items():
+                parameters = plan.get("parameters", {}) if isinstance(plan, dict) else {}
+                if not isinstance(parameters, dict):
+                    continue
+                for name, parameter in parameters.items():
+                    if not isinstance(parameter, dict):
+                        continue
+                    path = ("sequence_plans", str(plan_id), "parameters", str(name))
+                    targets.append(ScanTarget(
+                        _target_id("sequence", path), f"{plan_id} / {name}", "Sequence Sweep",
+                        "Regenerates one bundle entry per value and loads it at the matching workflow point.",
+                        parameter.get("unit"), path, "sequence", str(plan_id),
+                    ))
+        resources = self.config.get("resources", {})
+        if isinstance(resources, dict):
+            for path, step in _walk_steps(self.config.get("procedure", []), ("procedure",)):
+                call = step.get("call")
+                if not isinstance(call, str) or "." not in call:
+                    continue
+                resource, method = call.split(".", 1)
+                raw = resources.get(resource, {})
+                adapter = str(raw.get("adapter") or raw.get("adaptor") or "") if isinstance(raw, dict) else ""
+                action = DEFAULT_ACTION_REGISTRY.resolve_action(adapter, method)
+                if action is None:
+                    continue
+                args = step.get("args", {}) if isinstance(step.get("args"), dict) else {}
+                for argument in action.arguments:
+                    if not argument.allow_reference or argument.dtype not in {"number", "float", "integer", "int"}:
+                        continue
+                    if argument.name not in args or isinstance(args[argument.name], str):
+                        continue
+                    argument_path = (*path, "args", argument.name)
+                    targets.append(ScanTarget(
+                        _target_id("action", argument_path), f"{call} / {argument.name}", "Instrument Action",
+                        argument.description or f"Changes {argument.name} before executing {call} at each scan point.",
+                        argument.unit, argument_path, "action",
+                    ))
+        return tuple(targets)
+
+    def configure_scan_target(
+        self, target_id: str, name: str, values: dict[str, Any] | list[Any]
+    ) -> ScanTarget:
+        target = next((item for item in self.list_scan_targets() if item.id == target_id), None)
+        if target is None:
+            raise KeyError(f"Unknown or no longer available scan target: {target_id}")
+        if not name.strip():
+            raise ValueError("scan name is required")
+        before = self.snapshot()
+        if target.kind == "sequence":
+            parameter = _get(self.config, target.path)
+            parameter.clear()
+            if isinstance(values, list):
+                parameter.update({"mode": "explicit", "values": deepcopy(values)})
+            else:
+                parameter.update({"mode": "linspace", **deepcopy(values)})
+            if target.unit:
+                parameter["unit"] = target.unit
+            parameter.setdefault("expose_as", name)
+        else:
+            step_path = target.path[:-2]
+            parent, index = step_path[:-1], _index(step_path)
+            siblings = _get(self.config, parent)
+            step = deepcopy(siblings[index])
+            step["args"][target.path[-1]] = f"${{{name}}}"
+            siblings[index] = {"scan": {"name": name, "values": deepcopy(values), "body": [step]}}
+        self._commit(before)
+        return target
 
     def insert_structural_step(self, kind: str, parent: WorkflowPath, index: int | None = None) -> WorkflowPath:
         if kind not in STRUCTURAL_KINDS: raise ValueError(f"unsupported structural step: {kind}")
@@ -147,6 +232,8 @@ class WorkflowComposerModel:
                 spec = DEFAULT_ACTION_REGISTRY.resolve_action(str(adapter), method)
                 if spec is None:
                     diagnostics.append(ConfigDiagnostic("warning", "action_schema_incomplete", f"No ActionSpec for {call}.", path, path)); continue
+                if method == "compile_sequence" and "sequence_sweep" in path:
+                    states[resource].add("sequence_loaded")
                 missing = set(spec.requires_states) - states[resource]
                 if missing: diagnostics.append(ConfigDiagnostic("error", "workflow_lifecycle_missing", f"{call} requires state(s): {', '.join(sorted(missing))}.", path, path))
                 if spec.safety_class in {"output", "analog_output", "unknown"} and not allow_output and section != "cleanup":
@@ -191,6 +278,11 @@ def convert_form_values(action: ActionSpec, raw: dict[str, Any]) -> dict[str, An
         elif spec.dtype in {"number", "float"}: result[name] = float(value)
         elif spec.dtype in {"integer", "int"}: result[name] = int(value)
         elif spec.dtype == "boolean" and isinstance(value, str): result[name] = value.lower() in {"1", "true", "yes", "on"}
+        elif spec.dtype == "list" and isinstance(value, str):
+            parsed = json.loads(value) if value.lstrip().startswith("[") else [item.strip() for item in value.split(",") if item.strip()]
+            result[name] = parsed
+        elif spec.dtype == "mapping" and isinstance(value, str): result[name] = json.loads(value)
+        elif spec.dtype in {"any", "object"} and isinstance(value, str) and value.strip().lower() in {"none", "null"}: result[name] = None
         else: result[name] = value
     return result
 
@@ -216,10 +308,13 @@ def _walk_steps(steps: Any, path: WorkflowPath):
     for i, step in enumerate(steps):
         if not isinstance(step, dict): continue
         p = (*path, i); yield p, step
-        for kind in ("scan", "average", "measurement", "run", "cleanup"):
+        for kind in ("scan", "average", "measurement", "run", "cleanup", "sequence_sweep"):
             payload = step.get(kind)
             if isinstance(payload, dict):
                 key = "steps" if kind in {"run", "cleanup"} and "steps" in payload else "body"
                 yield from _walk_steps(payload.get(key), (*p, kind, key))
 def _phase_group(phase: str) -> str:
     return {"configure": "Configure", "arm": "Arm / Start", "start": "Arm / Start", "read": "Acquire / Read", "stop": "Stop / Cleanup", "cleanup": "Stop / Cleanup"}.get(phase, "Task")
+
+def _target_id(kind: str, path: WorkflowPath) -> str:
+    return f"{kind}:" + "/".join(str(part) for part in path)
