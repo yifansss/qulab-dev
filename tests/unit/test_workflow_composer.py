@@ -68,6 +68,26 @@ def test_recipe_is_canonical_and_safety_closed() -> None:
     assert model.config["safety"]["allow_output"] is False
 
 
+def test_hardware_rabi_builder_recipe_has_only_hardware_contracts() -> None:
+    model = WorkflowComposerModel(_config())
+    model.apply_recipe("hardware_rabi_builder")
+    assert set(model.config["resources"]) == {"asg", "daq"}
+    assert model.config["procedure"] == []
+    assert "sequence_plans" not in model.config
+    assert model.config["sync"]["triggers"][0]["target"] == "daq.PFI1"
+    assert model.config["analysis"]["modules"][0]["inputs"] == ["fluorescence_traces"]
+    assert model.config["safety"]["allow_output"] is False
+
+
+def test_controller_can_start_hardware_rabi_recipe_without_loaded_config(tmp_path) -> None:
+    from qulab.gui.controller import OperatorController
+
+    controller = OperatorController(tmp_path / "runs")
+    controller.apply_workflow_recipe("hardware_rabi_builder")
+    assert controller.current_config["name"] == "hardware_rabi_builder"
+    assert controller.current_config["procedure"] == []
+
+
 def test_scan_targets_bind_action_argument_without_manual_reference_editing() -> None:
     config = _config()
     config["procedure"] = [{"call": "mw.set_frequency", "args": {"freq_hz": 2.87e9}}]

@@ -1,0 +1,87 @@
+schema_version: 1
+name: hardware_rabi_builder
+description: >
+  Minimal hardware-only starting point for building a real two-trace Rabi
+  experiment in the Guided Composer. It declares the ASG/NI hardware contract,
+  synchronization routing, and derived signal contract, but intentionally has
+  no sequence plan or workflow. Build those explicitly in the GUI.
+tags: [hardware, rabi, builder, pse, ai2, asg_master]
+
+safety:
+  requires_allow_output: true
+  allow_output: false
+  physically_verified: false
+  checklist:
+    - Confirm ASG Channel 1 is connected to the external microwave gate or trigger input.
+    - Confirm ASG Channel 2 is connected to NI Dev2/PFI1.
+    - Confirm PSE analog output is connected to NI Dev2/ai2 differential input.
+    - Verify Channel 1 and Channel 2 edges on an oscilloscope before enabling output.
+    - Verify Dev2 supports retriggerable finite analog input before a two-trigger run.
+
+bench:
+  wiring:
+    - ASG Channel 1 -> external microwave source trigger or gate input.
+    - ASG Channel 2 -> NI Dev2/PFI1 AI start trigger.
+    - PSE analog output -> NI Dev2/ai2 differential input.
+  expected_observation:
+    - One sequence will later emit a variable Channel 1 microwave gate and two Channel 2 AI triggers.
+    - NI will later return two independent AI2 records per sequence.
+
+resources:
+  asg:
+    adapter: pycontrol_asg
+    capabilities: [pulse_sequencer, trigger_source]
+    address: auto
+    simulation: false
+    pycontrol_path: drivers/pycontrol
+    voltage_level: 0
+    impedance: 0
+  daq:
+    adapter: pycontrol_ni
+    capabilities: [analog_input, trigger_receiver]
+    driver: sync
+    device: Dev2
+    simulation: false
+    pycontrol_path: drivers/pycontrol
+
+sync:
+  master: asg
+  triggers:
+    - {source: asg.ch2, target: daq.PFI1, edge: rising, purpose: ai_retriggerable_start}
+  order:
+    configure: [daq, asg]
+    arm: [daq, asg]
+    start: [asg]
+    read: [daq]
+
+# The builder creates sequence_plans and procedure later. This contract is
+# intentionally present now so the final two-record workflow has a stable data
+# interface from its first draft.
+analysis:
+  live: {enabled: true, execution: sync, fail_policy: fail, save_outputs: true}
+  modules:
+    - name: two_trace_ratio
+      module: analysis_modules.two_trace_ratio
+      class: TwoTraceMeanRatio
+      inputs: [fluorescence_traces]
+      outputs: [fluorescence_signal_mean, fluorescence_reference_mean, fluorescence_ratio]
+      show: true
+      save: true
+      fail_policy: fail
+      args:
+        channel_index: 0
+        signal_record: 0
+        reference_record: 1
+        signal_sample_start: 0
+        signal_sample_stop: 1000
+        reference_sample_start: 0
+        reference_sample_stop: 1000
+        denominator_epsilon: 1.0e-12
+
+procedure: []
+cleanup:
+  - call: asg.stop
+  - call: daq.stop
+
+storage:
+  backends: [csv]

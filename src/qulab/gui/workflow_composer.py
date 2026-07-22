@@ -47,6 +47,7 @@ RECIPE_FILES = {
     "ni_master_ao_ai": "configs/experiments/hardware_ni_master_ao_ai.template.yaml",
     "asg_ttl_scope_smoke": "configs/experiments/bench_03_asg_ttl_scope_smoke.template.yaml",
     "asg_master_ni_pse_trace": "configs/experiments/bench_05_pse_ai1_asg_triggered_trace.template.yaml",
+    "hardware_rabi_builder": "configs/experiments/hardware_rabi_builder.recipe.yaml",
     "generated_rabi": "configs/experiments/dry_run_rabi_sequence_family.yaml",
     "low_power_odmr": "configs/experiments/dry_run_odmr.yaml",
 }

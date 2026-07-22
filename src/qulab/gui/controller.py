@@ -683,10 +683,18 @@ class OperatorController:
         return changed
 
     def apply_workflow_recipe(self, name: str) -> None:
+        # Recipes are also valid entry points: a user need not load an unrelated
+        # experiment before starting a new draft from the Builder page.
+        if self.config is None:
+            self.config_path = None
+            self.config = {"schema_version": 1, "name": "untitled", "procedure": [], "cleanup": []}
+            self._workflow_composer = WorkflowComposerModel(self.config)
         self.workflow_composer().apply_recipe(name)
         self.sequence_sweep_model = None
         self._sequence_authoring = None
         self.parsed = None
+        self._sequence_prepared_revisions = {}
+        self.reset_live_state()
 
     def sequence_authoring(self) -> SequenceAuthoringModel:
         self._require_config()
