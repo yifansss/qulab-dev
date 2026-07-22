@@ -10,6 +10,7 @@ import numpy as np
 
 from qulab.storage import DatasetModel, RunReader, SliceController
 from qulab.storage.array_backend import DataArray
+from qulab.gui.plot_canvas import scientific_plot_canvas_class
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -201,6 +202,7 @@ def create_data_viewer_panel(
 
     if PyqtgraphCanvas is not None:
         PlotCanvas = PyqtgraphCanvas
+    PlotCanvas = scientific_plot_canvas_class(QtWidgets, QtCore, QtGui)
 
     class ViewerWindow(QtWidgets.QWidget):
         def __init__(self) -> None:
