@@ -34,3 +34,23 @@ def test_collision_marks_raw_error_without_reclassification():
     catalog.handle_event(DerivedData(point_id="p", data={"same": 1}))
     assert catalog.get("same").source_kind == "raw"
     assert catalog.get("same").status == "error"
+
+
+def test_numeric_arrays_are_plot_data_but_text_is_diagnostic_only():
+    catalog = LiveDataCatalog()
+    catalog.handle_event(DataPoint(point_id="p", data={"trace": [1, 2], "matrix": [[1, 2]], "label": "ok"}))
+    assert catalog.get("trace").dims == ("sample_index",)
+    assert catalog.get("matrix").dims == ("channel", "sample_index")
+    assert catalog.get("label").status == "error"
+    catalog.handle_event(DataPoint(point_id="bad", data={"ragged": [[1], [2, 3]]}))
+    assert catalog.get("ragged").status == "error"
+
+
+def test_buffer_selectors_sorting_and_clear_are_view_only_contracts():
+    buffer = LivePointBuffer()
+    for point_id, x, group in [("a", 2, "keep"), ("b", 1, "keep"), ("c", 0, "skip")]:
+        buffer.handle_event(DataPoint(point_id=point_id, coords={"x": x, "group": group}, data={"v": x}))
+    line = buffer.line("v", "x", {"group": "keep"})
+    assert line.x.tolist() == [1, 2]
+    buffer.clear()
+    assert buffer.points() == ()
