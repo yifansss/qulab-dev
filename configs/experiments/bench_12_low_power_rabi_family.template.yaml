@@ -23,7 +23,7 @@ sync:
   triggers: [{source: asg.ch6, target: daq.PFI0, edge: rising, purpose: daq_start_trigger}]
   order: {configure: [mw, daq, asg], arm: [daq, asg], start: [asg], read: [daq]}
 setup:
-  - {call: mw.set_frequency, args: {frequency_hz: 2.87e9}}
+  - {call: mw.set_frequency, args: {freq_hz: 2.87e9}}
   - {call: mw.set_power, args: {power_dbm: -30}}
 procedure:
   - sequence_sweep:

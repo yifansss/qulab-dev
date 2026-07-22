@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import re
+import tempfile
 from pathlib import Path
 from typing import Any, Iterable
 
 import yaml
 
+from qulab.instruments.action_specs import DEFAULT_ACTION_REGISTRY, validate_action_call
 from qulab.instruments.registry import InstrumentRegistry
 from qulab.paths import resolve_project_path
 from qulab.sequence_generation import SequenceGenerationError, prepare_and_parse_experiment_config
@@ -81,7 +83,12 @@ def validate_config_candidate(path: str | Path, *, registry: InstrumentRegistry 
     if not any(item.severity == "error" for item in diagnostics):
         try:
             if config.get("sequence_plans"):
-                parsed = prepare_and_parse_experiment_config(config, instrument_registry=instrument_registry)
+                # Candidate validation may compile provider output, but it must not
+                # leave persistent bundles in the project or reuse them as Prepare.
+                with tempfile.TemporaryDirectory(prefix="qulab_candidate_") as cache_dir:
+                    parsed = prepare_and_parse_experiment_config(
+                        config, cache_root=Path(cache_dir), instrument_registry=instrument_registry
+                    )
             else:
                 parsed = parse_experiment_config(config, registry=instrument_registry)
             for issue in parsed.validation.issues:
@@ -227,13 +234,18 @@ def _validate_step_refs(steps: list[Any], path: ConfigPath, resources: dict[str,
             else:
                 raw = resources[resource]
                 adapter = raw.get("adapter") if isinstance(raw, dict) else None
+                action_spec = DEFAULT_ACTION_REGISTRY.resolve_action(str(adapter), method) if adapter else None
                 adapter_type = registry.adapter_type(str(adapter)) if adapter and registry.has_adapter(str(adapter)) else None
                 capabilities = raw.get("capabilities", ()) if isinstance(raw, dict) else ()
                 is_bundle_runtime_action = (
                     method == "load_sequence_from_bundle" and "pulse_sequencer" in capabilities
                 )
-                if adapter_type is not None and not is_bundle_runtime_action and not callable(getattr(adapter_type, method, None)):
+                if action_spec is None and adapter_type is not None and not is_bundle_runtime_action and not callable(getattr(adapter_type, method, None)):
                     out.append(_at("error", "action_method_unknown", f"Adapter '{adapter}' does not declare callable method '{method}'.", (*step_path, "call"), source, locations, None))
+                elif action_spec is not None and isinstance(step.get("args", {}), dict):
+                    for issue in validate_action_call(action_spec, step.get("args", {}), scope):
+                        arg_path = (*step_path, "args", issue.argument) if issue.argument else (*step_path, "args")
+                        out.append(_at(issue.severity, issue.code, issue.message, arg_path, source, locations, None))
             for arg, value in (step.get("args") or {}).items() if isinstance(step.get("args", {}), dict) else ():
                 _check_refs(value, (*step_path, "args", arg), scope, source, locations, out)
         for kind in ("scan", "average", "measurement", "run", "cleanup"):

@@ -11,6 +11,11 @@ from .base import (
 )
 from .profiles import build_context_from_resources
 from .registry import InstrumentRegistry
+from .action_specs import (
+    MISSING, ActionSpec, ActionSpecRegistry, AdapterSpec, ArgumentSpec, CapabilitySpec,
+    DataFieldSpec, ReturnSpec, DEFAULT_ACTION_REGISTRY, render_action_catalog_markdown,
+    validate_action_call,
+)
 
 __all__ = [
     "InstrumentAdapter",
@@ -21,5 +26,16 @@ __all__ = [
     "InstrumentSafetyError",
     "InstrumentTimeoutError",
     "InstrumentUnsupportedOperation",
+    "MISSING",
+    "ActionSpec",
+    "ActionSpecRegistry",
+    "AdapterSpec",
+    "ArgumentSpec",
+    "CapabilitySpec",
+    "DataFieldSpec",
+    "ReturnSpec",
+    "DEFAULT_ACTION_REGISTRY",
+    "render_action_catalog_markdown",
+    "validate_action_call",
     "build_context_from_resources",
 ]
