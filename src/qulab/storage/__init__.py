@@ -11,6 +11,7 @@ from .manifest import DatasetManifest
 from .metadata import MetadataWriter
 from .run_store import RunStore
 from .run_reader import RunReader
+from .run_workspace import Fidelity, HistoricalReplay, HistoricalRunWorkspace, HistoricalSectionStatus
 from .slicing import HeatmapData, LineData, SliceController, TraceData
 from .synthetic import create_synthetic_advanced_run
 from .zarr_backend import ZarrBackend
@@ -32,6 +33,10 @@ __all__ = [
     "RunIndex",
     "RunReader",
     "RunStore",
+    "Fidelity",
+    "HistoricalReplay",
+    "HistoricalRunWorkspace",
+    "HistoricalSectionStatus",
     "SliceController",
     "TraceData",
     "ZarrBackend",
