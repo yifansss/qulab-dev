@@ -161,7 +161,7 @@ operator_parameters:
 - 多个 `asg.load_sequence` 参数显示时必须带 occurrence 编号和 workflow 位置，例如 `asg.load_sequence #2 file - procedure/0/...`，避免多行看起来同名。
 - `file_picker` 类型参数应提供 Open Editor 入口，并在 editor 依赖缺失时显示友好提示，而不是让 standalone editor traceback 泄露给用户。
 
-### 3.5 Sequence Sweep Submode (Phase E Planned)
+### 3.5 Guided Sequence Sweep Submode
 
 Sequence Sweep 用于把 P9 bundle runtime 变成现场可用的 sequence scan authoring。详细架构见
 `docs/SEQUENCE_FAMILY_GENERATOR_PHASE_E_PLAN.md`。
@@ -400,7 +400,11 @@ PYTHONPATH=src python -m qulab.gui.pyqt_operator_app
 - Save YAML 后可重新 `parse_experiment_config`，并可 dry-run。
 - Prepare 显示 resource table 和 preflight issue table。
 - Start 在后台线程执行 dry-run，通过 `EventBus + RunStore` 更新 run log、run path、line plot 和 point table。
-- `Sequence Sweep` 列出plan/provider/template/axes/point count/state/hash，可预览代表点，并在后台执行Prepare；业务规则来自headless generation API。
+- `Sequence Sweep` 是唯一的九阶段 guided authoring 入口：Resource & Mode、Source、Channel Roles、Fixed Parameters、Sweep Parameters、Targets & Propagation、Preview & Compare、Validate & Prepare、Provenance。
+- Curated、Generic Template Sweep 与 Standalone Editor 共用同一 canonical `sequence_plans` 配置。参数控件来自 provider descriptor；fixed/linspace/range/explicit、sampling order、pulse target、propagation 与 anchor constraint 均不要求手写 JSON。
+- First/Current/Last 及 first/last Overlay/Difference 使用真实 pulse timeline；问题表显示 severity/code/location/hint，并可跳转到负责阶段。
+- Standalone Editor 在后台运行并消费 versioned protocol；只有 hash 校验成功的 saved artifact 会被接受。Prepare 同样在后台运行，并以 authoring revision 防止过期结果覆盖新编辑。
+- 成功 Prepare 后可查看 plan/bundle/manifest/provider/template hash、compiled workflow 和预期 RunStore provenance；任何编辑都会把旧结果标为 stale。
 - Controller提供plan CRUD、parameter/target/constraint更新、target fingerprint、estimate、preview和compiled workflow preview。修改会使prepared结果stale并禁止静默复用。
 - `Operator Parameters` 同步发现sequence plan的fixed/range/explicit字段；保存仍只写authoring YAML。
 
@@ -413,7 +417,7 @@ PYTHONPATH=src python -m qulab.gui.pyqt_operator_app
 - 还没有完整的 `Direct Control` submode；真实硬件手动控制需要先接入 bench safety workflow。
 - ASG sequence bridge 当前只做 resource `sequence_file` 编辑、外部 editor 启动和 metadata/hash 预览；不实现 pulse compiler，也不连接或启动真实硬件。
 - Live Run 已接入 raw/derived catalog、saved/live-only/waiting/error 状态、line/heatmap/trace selection model、module queue/latency 状态和只读 sequence context；公式仍只存在于 analysis modules。
-- 当前Sequence Sweep视图是紧凑表格/文本预览；完整的图形pulse/constraint编辑器仍可继续增强。Prepare与preview不会连接硬件。
+- Guided Sequence 的 preview/validate 不连接硬件，只有显式 Prepare 才 materialize bundle；物理 trigger cable/output safety 仍必须在实验台确认。Windows 125% scaling 与真实 standalone editor 生命周期仍需按 manual acceptance 表做现场复核。
 
 Live View renderer 按 pyqtgraph、Matplotlib、原生 Qt 的顺序 fallback，并与 Data Viewer 共用入口。Pause/clear 只暂停重绘或清空有界显示 buffer，采集与 RunStore 不受影响。无显式 trace 轴时使用 `sample_index`。硬件实验台启动前可先运行 `configs/experiments/live_view_showcase.yaml`，详见 `docs/LIVE_VIEW.md`。
 

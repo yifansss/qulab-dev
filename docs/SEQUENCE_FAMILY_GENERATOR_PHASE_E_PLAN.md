@@ -790,6 +790,19 @@ Acceptance:
 
 ### Phase E4: Sequence Sweep GUI Submode — Implemented (mock/dry-run)
 
+P11.3C-GUI completes the Phase E4 operator surface. The unique Sequence Sweep
+tab is now a nine-step guided editor rather than the former plan table plus raw
+JSON fields. It supports curated, generic-template, and standalone-editor plans;
+descriptor-driven parameter forms and sampling order; structured pulse target,
+propagation, group, and anchor controls; normalized timing timelines and
+first/last comparison; issue-to-step navigation; revision-safe asynchronous
+Prepare; and read-only bundle/workflow/RunStore provenance.
+
+The implementation deliberately leaves pulse compilation in the existing
+providers and generic transform engine. It does not add pulse workflow nodes,
+resource-global sequence source state, hardware access during preview/validate,
+or manifest editing. Physical route verification remains a bench task.
+
 - Add family/template selector.
 - Generate parameter controls from `SequenceFamilySpec`.
 - Add target/property/propagation editor for generic mode.

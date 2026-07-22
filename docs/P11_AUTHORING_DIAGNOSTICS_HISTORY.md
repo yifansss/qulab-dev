@@ -96,6 +96,24 @@ to stderr and stdout contains only the JSON protocol. Missing editor/runtime,
 invalid JSON, version mismatch, timeout, process error, and saved-file hash
 mismatch are friendly fail-closed results.
 
+### P11.3C GUI integration
+
+The existing and only Control / Sequence Sweep tab now hosts a guided Qt view
+backed by a Qt-free presenter snapshot. Its nine steps use the model's ordered
+status, provider field descriptors, point estimate, located issues, revision,
+and prepared state. The widget writes through stable `OperatorController`
+commands, so Operator Parameters, Builder Workflow, YAML save, Prepare, Live
+Run context, and historical provenance continue to observe one config mapping.
+
+Curated mode exposes provider-defined fixed and sweep fields. Generic mode adds
+template inspection, channel/pulse selection, transform and propagation
+catalogs, group and anchor controls, and normalized first/current/last timeline
+previews with overlay/difference. Standalone mode launches the external editor
+off the UI thread and accepts only a protocol-reported artifact whose SHA-256
+matches the saved file. Preview and validation never materialize a bundle or
+touch hardware; explicit Prepare runs off the UI thread and discards a result
+if the plan revision changed while it was building.
+
 ## Known Limits
 
 - Historical replay cannot reconstruct facts that were never recorded.
