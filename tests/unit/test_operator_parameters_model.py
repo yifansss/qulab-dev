@@ -20,8 +20,8 @@ def test_auto_discovery_finds_scan_average_call_sequence_and_storage() -> None:
     assert by_name["avg_count"].source == "procedure.average[avg].count"
     assert by_name["mw_freq_hz"].source == "setup.call[mw.set_frequency].args.freq_hz"
     assert by_name["mw_power_dbm"].source == "setup.call[mw.set_power].args.power_dbm"
-    assert by_name["asg_sequence_file"].source == "resources.asg.sequence_file"
     assert by_name["storage_backends"].source == "storage.backends"
+    assert "asg_sequence_file" not in by_name
     assert "asg_sequence" not in by_name
     assert not any("load_sequence" in spec.name for spec in specs)
     assert all(spec.source != "setup.call[asg.load_sequence].args.sequence" for spec in specs)
@@ -60,7 +60,6 @@ def test_apply_operator_parameter_updates_raw_config_and_workflow_document() -> 
     apply_operator_parameter(document, config, "tau_s_points", "7")
     apply_operator_parameter(document, config, "avg_count", "3")
     apply_operator_parameter(document, config, "mw_power_dbm", "-6")
-    apply_operator_parameter(document, config, "asg_sequence_file", "configs/sequences/rabi.seq")
     apply_operator_parameter(document, config, "storage_backends", "csv,zarr")
 
     reparsed = parse_experiment_config(deepcopy(config))
@@ -69,7 +68,7 @@ def test_apply_operator_parameter_updates_raw_config_and_workflow_document() -> 
     assert config["procedure"][0]["scan"]["values"]["points"] == 7
     assert config["procedure"][0]["scan"]["body"][0]["measurement"]["body"][1]["average"]["count"] == 3
     assert config["setup"][1]["args"]["power_dbm"] == -6
-    assert config["resources"]["asg"]["sequence_file"] == "configs/sequences/rabi.seq"
+    assert "sequence_file" not in config["resources"]["asg"]
     assert config["storage"]["backends"] == ["csv", "zarr"]
     assert document.config is config
 
@@ -88,3 +87,37 @@ def test_load_sequence_calls_get_file_picker_parameters() -> None:
     assert any(spec.value == "configs/sequences/point_a.json" for spec in sequence_specs)
     assert any("#" in spec.label and "procedure/0" in spec.label for spec in sequence_specs)
     assert all(not spec.source.endswith(".args.sequence") for spec in specs)
+
+
+def test_bench_05_ai_channels_are_operator_editable() -> None:
+    config = load_experiment_config(
+        ROOT / "configs" / "experiments" / "bench_05_pse_ai1_asg_triggered_trace.template.yaml"
+    )
+
+    specs = discover_operator_parameters(None, config)
+    channel_spec = next(spec for spec in specs if spec.source.endswith("configure_ai_external_trigger].args.channels"))
+    sequence_specs = [spec for spec in specs if spec.widget == "file_picker"]
+
+    assert channel_spec.value == ["ai1"]
+    assert channel_spec.path is not None
+    assert len(sequence_specs) == 1
+    assert sequence_specs[0].source.startswith("workflow.setup.")
+    assert not any(spec.source == "resources.asg.sequence_file" for spec in specs)
+
+    apply_operator_parameter(None, config, channel_spec.name, "[ai0, ai1]")
+    assert config["procedure"][0]["average"]["body"][0]["measurement"]["body"][0]["args"]["channels"] == [
+        "ai0",
+        "ai1",
+    ]
+
+
+def test_load_sequence_picker_updates_the_original_path_argument() -> None:
+    config = {
+        "resources": {"pulse_main": {"adapter": "mock_asg", "capabilities": ["pulse_sequencer"]}},
+        "procedure": [{"call": "pulse_main.load_sequence", "args": {"path": "one.json"}}],
+    }
+
+    spec = next(spec for spec in discover_operator_parameters(None, config) if spec.widget == "file_picker")
+    apply_operator_parameter(None, config, spec.name, "two.json")
+
+    assert config["procedure"][0]["args"] == {"path": "two.json"}

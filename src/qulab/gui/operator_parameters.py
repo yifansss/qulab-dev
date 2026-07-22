@@ -100,7 +100,6 @@ def _auto_specs(raw_config: dict[str, Any]) -> list[OperatorParameterSpec]:
     specs.extend(_auto_average_specs(raw_config))
     specs.extend(_auto_call_arg_specs(raw_config))
     specs.extend(_auto_sequence_load_specs(raw_config))
-    specs.extend(_auto_resource_sequence_specs(raw_config))
     specs.extend(_auto_storage_specs(raw_config))
     return _dedupe_names(specs)
 
@@ -198,7 +197,7 @@ def _auto_call_arg_specs(raw_config: dict[str, Any]) -> list[OperatorParameterSp
         for arg_name, value in args.items():
             if _is_sequence_loader_arg(action, str(arg_name)):
                 continue
-            if not _is_supported_scalar(value):
+            if not _is_supported_quick_edit_value(value):
                 continue
             source = f"{section}.call[{action}].args.{arg_name}"
             specs.append(
@@ -214,43 +213,18 @@ def _auto_call_arg_specs(raw_config: dict[str, Any]) -> list[OperatorParameterSp
     return specs
 
 
-def _auto_resource_sequence_specs(raw_config: dict[str, Any]) -> list[OperatorParameterSpec]:
-    resources = raw_config.get("resources", {})
-    specs: list[OperatorParameterSpec] = []
-    if not isinstance(resources, dict):
-        return specs
-    for name, resource in resources.items():
-        if not isinstance(resource, dict):
-            continue
-        capabilities = tuple(str(item) for item in resource.get("capabilities", ()))
-        adapter = str(resource.get("adapter") or "")
-        if "sequence_file" not in resource and "pulse_sequencer" not in capabilities and "asg" not in adapter.lower():
-            continue
-        specs.append(
-            OperatorParameterSpec(
-                name=_snake(f"{name}_sequence_file"),
-                label=f"{name} sequence file",
-                source=f"resources.{name}.sequence_file",
-                value=resource.get("sequence_file", ""),
-                widget="file_picker",
-                path=("resources", name, "sequence_file"),
-            )
-        )
-    return specs
-
-
 def _auto_sequence_load_specs(raw_config: dict[str, Any]) -> list[OperatorParameterSpec]:
     specs: list[OperatorParameterSpec] = []
     occurrence = 0
     for path, step, section in _iter_call_steps(raw_config):
         action = str(step.get("call") or "")
         resource, _, method = action.partition(".")
-        if method != "load_sequence" or "asg" not in resource.lower():
+        if method != "load_sequence":
             continue
         args = step.get("args")
         if not isinstance(args, dict):
             continue
-        sequence_file = args.get("sequence_file") or args.get("path") or args.get("sequence_path")
+        arg_name, sequence_file = _sequence_file_arg(args)
         if not sequence_file:
             continue
         occurrence += 1
@@ -260,10 +234,10 @@ def _auto_sequence_load_specs(raw_config: dict[str, Any]) -> list[OperatorParame
             OperatorParameterSpec(
                 name=_snake(f"{resource}_load_sequence_{occurrence}_{path_label}_file"),
                 label=f"{resource}.load_sequence #{occurrence} file - {location}",
-                source=f"workflow.{section}.{'/'.join(str(part) for part in path)}.call[{action}].args.sequence_file",
+                source=f"workflow.{section}.{'/'.join(str(part) for part in path)}.call[{action}].args.{arg_name}",
                 value=sequence_file,
                 widget="file_picker",
-                path=(*path, "args", "sequence_file"),
+                path=(*path, "args", arg_name),
             )
         )
     return specs
@@ -426,17 +400,26 @@ def _path_exists(config: dict[str, Any], path: tuple[PathPart, ...]) -> bool:
         return False
 
 
-def _is_supported_scalar(value: Any) -> bool:
-    return isinstance(value, (str, int, float, bool)) or value is None
+def _is_supported_quick_edit_value(value: Any) -> bool:
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return True
+    return isinstance(value, list) and all(
+        isinstance(item, (str, int, float, bool)) or item is None for item in value
+    )
 
 
 def _is_sequence_loader_arg(action: str, arg_name: str) -> bool:
-    resource, _, method = action.partition(".")
+    _resource, _, method = action.partition(".")
     if method != "load_sequence":
         return False
-    if "asg" not in resource.lower():
-        return False
     return arg_name in {"sequence", "path", "sequence_path", "sequence_file"}
+
+
+def _sequence_file_arg(args: dict[str, Any]) -> tuple[str, Any]:
+    for name in ("sequence_file", "path", "sequence_path"):
+        if args.get(name):
+            return name, args[name]
+    return "sequence_file", None
 
 
 def _widget_for_value(value: Any) -> str:

@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+import yaml
+
 
 PathPart = str | int
 
@@ -37,6 +39,9 @@ class PreflightIssueViewModel:
     severity: str
     code: str
     message: str
+    location: str = ""
+    hint: str = ""
+    workflow_path: tuple[PathPart, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -103,7 +108,11 @@ def parse_parameter_value(text: str, value_type: str) -> Any:
     if value_type == "list":
         if stripped == "":
             return []
-        return [_parse_number_or_string(item.strip()) for item in stripped.split(",")]
+        payload = stripped if stripped.startswith("[") and stripped.endswith("]") else f"[{stripped}]"
+        parsed = yaml.safe_load(payload)
+        if not isinstance(parsed, list):
+            raise ValueError("List parameter must be a YAML/JSON list or comma-separated values")
+        return [_parse_number_or_string(item) if isinstance(item, str) else item for item in parsed]
     return stripped
 
 

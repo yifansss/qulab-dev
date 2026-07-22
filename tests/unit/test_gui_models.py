@@ -33,3 +33,4 @@ def test_parse_parameter_value_supports_scientific_notation_and_lists() -> None:
     assert parse_parameter_value("2.5e-8", "number") == 2.5e-8
     assert parse_parameter_value("11", "int") == 11
     assert parse_parameter_value("1, 2.5e3, label", "list") == [1, 2500.0, "label"]
+    assert parse_parameter_value("[ai0, ai1]", "list") == ["ai0", "ai1"]

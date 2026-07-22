@@ -15,14 +15,13 @@ def test_operator_parameter_yaml_roundtrip_is_parseable(tmp_path: Path) -> None:
 
     controller.apply_operator_parameter("tau_s_points", "4")
     controller.apply_operator_parameter("avg_count", "1")
-    controller.apply_operator_parameter("asg_sequence_file", "configs/sequences/rabi.seq")
     path = controller.save_config(tmp_path / "edited.yaml")
 
     config = load_yaml_config(path)
     parsed = parse_experiment_config(config)
 
     assert parsed.validation.ok
-    assert config["resources"]["asg"]["sequence_file"] == "configs/sequences/rabi.seq"
+    assert "sequence_file" not in config["resources"]["asg"]
 
 
 def test_operator_parameter_scan_and_average_changes_dry_run_points(tmp_path: Path) -> None:
