@@ -52,6 +52,7 @@ from .analysis_status_model import AnalysisStatusModel
 from .sequence_context_model import SequenceContextModel
 from .workflow_composer import WorkflowComposerModel
 from .sequence_authoring import SequenceAuthoringModel
+from .sequence_authoring_presenter import GuidedSequenceViewState, SequenceAuthoringPresenter
 
 
 class OperatorController:
@@ -73,6 +74,7 @@ class OperatorController:
         self.historical_sequence_context = SequenceContextModel()
         self._workflow_composer: WorkflowComposerModel | None = None
         self._sequence_authoring: SequenceAuthoringModel | None = None
+        self._sequence_prepared_revisions: dict[str, str] = {}
         self._live_lock = RLock()
         self.live_catalog = LiveDataCatalog()
         self.live_buffer = LivePointBuffer()
@@ -99,6 +101,7 @@ class OperatorController:
             self.sequence_sweep_model = SequenceSweepEditorModel.load(self.config)
             self._workflow_composer = WorkflowComposerModel(self.config)
             self._sequence_authoring = SequenceAuthoringModel(self.config, self.sequence_sweep_model)
+            self._sequence_prepared_revisions = {}
             self.reset_live_state()
             result = replace(result, activated=True)
         self.last_candidate_result = result
@@ -174,7 +177,23 @@ class OperatorController:
         if self.sequence_sweep_model is not None and self.parsed.sequence_preparation is not None:
             for plan_id, bundle in self.parsed.sequence_preparation.materialized.items():
                 self.sequence_sweep_model.mark_prepared(plan_id, bundle.plan_hash)
+                self._sequence_prepared_revisions[plan_id] = self.sequence_authoring().revision(plan_id)
         return self._preflight_view(self.parsed)
+
+    def prepare_sequence_plan(self, plan_id: str, *, expected_revision: str | None = None) -> PreflightViewModel:
+        """Prepare one authoring revision and discard a raced/stale result."""
+        self._require_config(); assert self.config is not None
+        revision = expected_revision or self.sequence_authoring().revision(plan_id)
+        try: candidate = prepare_and_parse_experiment_config(deepcopy(self.config))
+        except SequenceGenerationError as exc: raise ConfigValidationError(f"[{exc.code}] {exc}") from exc
+        if self.sequence_authoring().revision(plan_id) != revision:
+            raise ConfigValidationError("[sequence_prepare_revision_changed] Plan changed while Prepare was running; result discarded")
+        self.parsed = candidate
+        if candidate.sequence_preparation is not None:
+            for prepared_id, bundle in candidate.sequence_preparation.materialized.items():
+                self._sequence_model().mark_prepared(prepared_id, bundle.plan_hash)
+                self._sequence_prepared_revisions[prepared_id] = self.sequence_authoring().revision(prepared_id)
+        return self._preflight_view(candidate)
 
     def list_sequence_plans(self) -> list[SequencePlanViewModel]:
         return self._sequence_model().list_plans()
@@ -185,6 +204,16 @@ class OperatorController:
     def create_sequence_plan(self, plan_id: str, resource: str, provider: str, template: str | None = None) -> None:
         self._sequence_model().create_plan(plan_id, resource, provider, template); self.parsed = None
 
+    def create_guided_sequence_plan(self, plan_id: str, resource: str, mode: str, *,
+                                    provider: str | None = None, template: str | None = None) -> GuidedSequenceViewState:
+        selected_provider = provider if mode == "curated" else "asg_template"
+        if not selected_provider: raise ValueError("Curated mode requires a provider")
+        if mode in {"generic", "standalone"} and not template: raise ValueError(f"{mode} mode requires a template")
+        self.create_sequence_plan(plan_id, resource, selected_provider, template)
+        if mode == "standalone": self.config["sequence_plans"][plan_id].setdefault("options", {})["authoring_mode"] = "standalone"
+        self._sequence_edited(plan_id)
+        return self.get_guided_sequence_state(plan_id)
+
     def duplicate_sequence_plan(self, plan_id: str, new_plan_id: str) -> None:
         self._sequence_model().duplicate_plan(plan_id, new_plan_id); self.parsed = None
 
@@ -192,10 +221,10 @@ class OperatorController:
         self._sequence_model().remove_plan(plan_id); self.parsed = None
 
     def update_sequence_plan_parameter(self, plan_id: str, name: str, patch: dict[str, Any]) -> None:
-        self._sequence_model().update_parameter(plan_id, name, patch); self.parsed = None
+        self.sequence_authoring().update_parameter(plan_id, name, patch); self._sequence_edited(plan_id)
 
     def update_sequence_plan_target(self, plan_id: str, alias: str, patch: dict[str, Any]) -> None:
-        self._sequence_model().update_target(plan_id, alias, patch); self.parsed = None
+        self._sequence_model().update_target(plan_id, alias, patch); self._sequence_edited(plan_id)
 
     def select_sequence_plan_target(self, plan_id: str, alias: str, channel: str, pulse: int) -> None:
         plan = parse_sequence_plans(self.current_config)[plan_id]
@@ -204,10 +233,10 @@ class OperatorController:
         selector.pop("alias", None); self.update_sequence_plan_target(plan_id, alias, selector)
 
     def update_sequence_plan_constraints(self, plan_id: str, constraints: list[dict[str, Any]]) -> None:
-        self._sequence_model().update_constraints(plan_id, constraints); self.parsed = None
+        self._sequence_model().update_constraints(plan_id, constraints); self._sequence_edited(plan_id)
 
     def set_sequence_plan_sampling_order(self, plan_id: str, order: list[str]) -> None:
-        self._sequence_model().set_sampling_order(plan_id, order); self.parsed = None
+        self._sequence_model().set_sampling_order(plan_id, order); self._sequence_edited(plan_id)
 
     def estimate_sequence_plan(self, plan_id: str) -> PlanEstimate:
         return self._sequence_model().estimate(plan_id)
@@ -574,6 +603,69 @@ class OperatorController:
         if self._sequence_authoring is None or self._sequence_authoring.config is not self.config:
             self._sequence_authoring = SequenceAuthoringModel(self.config, sweep)
         return self._sequence_authoring
+
+    def get_guided_sequence_state(self, plan_id: str | None = None, *, include_previews: bool = False,
+                                  current_index: int | None = None) -> GuidedSequenceViewState:
+        return SequenceAuthoringPresenter(self.sequence_authoring()).state(plan_id, include_previews=include_previews,
+                                                                          current_index=current_index)
+
+    def preview_sequence_mode_change(self, plan_id: str, new_mode: str):
+        return self.sequence_authoring().preview_mode_change(plan_id, new_mode)
+
+    def change_sequence_mode(self, plan_id: str, new_mode: str, *, provider: str | None = None,
+                             template: str | None = None) -> GuidedSequenceViewState:
+        self.sequence_authoring().change_mode(plan_id, new_mode, provider=provider, template=template)
+        self._sequence_edited(plan_id); return self.get_guided_sequence_state(plan_id)
+
+    def change_sequence_resource(self, plan_id: str, resource: str) -> GuidedSequenceViewState:
+        if resource not in self.sequence_resource_names():
+            raise ValueError(f"Resource '{resource}' does not declare pulse_sequencer capability")
+        self.sequence_authoring().update_resource(plan_id, resource)
+        self._sequence_edited(plan_id); return self.get_guided_sequence_state(plan_id)
+
+    def update_sequence_roles(self, plan_id: str, roles: dict[str, str], *, confirmed: bool = True) -> None:
+        self.sequence_authoring().update_roles(plan_id, roles, confirmed=confirmed); self._sequence_edited(plan_id)
+
+    def update_sequence_target_transform(self, plan_id: str, alias: str, channel: str, pulse: int, **options: Any) -> None:
+        self.sequence_authoring().update_target_transform(plan_id, alias, channel, pulse, **options); self._sequence_edited(plan_id)
+
+    def add_sequence_anchor(self, plan_id: str, target: str, reference: str, offset_s: float = 0.0) -> None:
+        self.sequence_authoring().add_anchor_constraint(plan_id, target, reference, offset_s); self._sequence_edited(plan_id)
+
+    def get_sequence_previews(self, plan_id: str, current_index: int | None = None):
+        return self.sequence_authoring().normalized_previews(plan_id, current_index)
+
+    def get_sequence_provenance(self, plan_id: str) -> dict[str, Any] | None:
+        preparation = getattr(self.parsed, "sequence_preparation", None) if self.parsed is not None else None
+        if preparation is None or plan_id not in preparation.materialized: return None
+        bundle = preparation.materialized[plan_id]
+        record = next((item for item in preparation.generation_records if item.plan_id == plan_id), None)
+        result = bundle.to_dict()
+        if record is not None: result["generation_record"] = record.to_dict()
+        result["compiled_workflow"] = deepcopy(preparation.compiled_config.get("procedure", []))
+        result["runstore_provenance"] = {
+            "sequence_generation": "metadata.json",
+            "sequence_plan": f"artifacts/sequence_generation/{plan_id}/sequence_plan.yaml",
+            "provider_identity": f"artifacts/sequence_generation/{plan_id}/provider_identity.json",
+        }
+        return result
+
+    def validate_sequence_plan(self, plan_id: str):
+        return self.sequence_authoring().located_issues(plan_id)
+
+    def insert_sequence_macro(self, plan_id: str, parent: tuple[str | int, ...] = ("procedure",),
+                              index: int | None = None):
+        path = self.sequence_authoring().insert_or_update_macro(plan_id, parent, index)
+        self._sequence_edited(plan_id); return path
+
+    def accept_sequence_editor_result(self, plan_id: str, saved_artifact: dict[str, Any] | None) -> None:
+        self.sequence_authoring().accept_editor_result(plan_id, saved_artifact); self._sequence_edited(plan_id)
+
+    def mark_sequence_template_stale(self, plan_id: str) -> None:
+        self._sequence_model()._edited(plan_id); self._sequence_edited(plan_id)
+
+    def _sequence_edited(self, plan_id: str) -> None:
+        self.parsed = None; self._sequence_prepared_revisions.pop(plan_id, None)
 
     def update_workflow_node(self, path: WorkflowPath, patch: dict[str, Any]) -> None:
         self._require_config()

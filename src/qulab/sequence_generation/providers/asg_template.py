@@ -7,7 +7,7 @@ from typing import Any, Mapping
 
 from ..errors import SequenceGenerationError, SequenceGenerationIssue
 from ..models import GeneratedSequencePoint, SequenceFamilySpec, SequencePlanValidationResult, SequenceSweepPlan
-from .asg_model import AsgSequence
+from .asg_model import AsgSequence, PulseSelector
 from .asg_transforms import preview_from_model, resolve_targets, transform_sequence
 
 
@@ -56,7 +56,15 @@ class AsgTemplateSweepProvider:
 
     def preview_point(self, parameters: Mapping[str, Any], *, template: Path | None):
         model = self._generate_model(parameters, template)
-        return preview_from_model(model, resolve_targets(model, self.plan))
+        # Fingerprints identify targets in the immutable base template. A
+        # duration/start transform legitimately changes that fingerprint, so
+        # do not revalidate it against the transformed preview model.
+        targets = {
+            str(alias): PulseSelector(str(raw.get("channel", "")), raw.get("pulse"))
+            for alias, raw in (self.plan.targets if self.plan else {}).items()
+            if isinstance(raw, Mapping)
+        }
+        return preview_from_model(model, targets)
 
 
 PROVIDER = AsgTemplateSweepProvider()

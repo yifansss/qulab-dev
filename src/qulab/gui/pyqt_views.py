@@ -17,6 +17,7 @@ from .plot_model import PlotSeries
 from .plot_canvas import LineSeriesView, scientific_plot_canvas_class
 from .qt_compat import QT_AVAILABLE, QtCore, QtGui, QtWidgets, missing_qt_message
 from .sequence_bridge import default_sequence_editor_path, open_sequence_editor
+from .sequence_authoring_view import create_guided_sequence_widget
 from .theme import classic_qt_stylesheet
 from .workflow_model import WorkflowNode, make_default_step
 
@@ -314,6 +315,21 @@ if QT_AVAILABLE:
             return tabs
 
         def _build_sequence_sweep_panel(self) -> QtWidgets.QWidget:
+            self.guided_sequence_widget = create_guided_sequence_widget(
+                QtWidgets,
+                QtCore,
+                QtGui,
+                self.controller,
+                on_config_changed=self._guided_sequence_changed,
+            )
+            return self.guided_sequence_widget
+
+        def _guided_sequence_changed(self) -> None:
+            self._refresh_operator_parameters()
+            self._refresh_tree()
+
+        def _build_legacy_sequence_sweep_panel(self) -> QtWidgets.QWidget:
+            """Deprecated implementation retained temporarily for downstream subclasses."""
             panel = QtWidgets.QWidget()
             layout = QtWidgets.QVBoxLayout(panel)
             controls = QtWidgets.QHBoxLayout()
@@ -363,6 +379,9 @@ if QT_AVAILABLE:
             return panel
 
         def _refresh_sequence_sweep(self) -> None:
+            if hasattr(self, "guided_sequence_widget"):
+                self.guided_sequence_widget.refresh()
+                return
             if not hasattr(self, "sequence_plan_table"): return
             self.sequence_plan_table.setRowCount(0)
             try: plans = self.controller.list_sequence_plans()
@@ -1340,6 +1359,8 @@ if QT_AVAILABLE:
                 return
             specs = self.controller.list_live_data_specs()
             selection = self.controller.get_live_selection()
+            had_source_rows = self.live_source_table.rowCount() > 0
+            visible_keys = set(self._selected_live_keys())
             signature = tuple((spec.key, spec.source_kind, spec.data_kind, spec.unit, spec.dims, spec.saved, spec.status, spec.error)
                               for spec in specs)
             dims: list[str] = []
@@ -1348,7 +1369,8 @@ if QT_AVAILABLE:
                 for spec in specs:
                     row = self.live_source_table.rowCount(); self.live_source_table.insertRow(row)
                     show = QtWidgets.QTableWidgetItem(); show.setFlags(show.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
-                    show.setCheckState(QtCore.Qt.CheckState.Checked if spec.key in selection.keys else QtCore.Qt.CheckState.Unchecked)
+                    selected_keys = visible_keys if had_source_rows else set(selection.keys)
+                    show.setCheckState(QtCore.Qt.CheckState.Checked if spec.key in selected_keys else QtCore.Qt.CheckState.Unchecked)
                     show.setData(_user_role(), (spec.source_kind, spec.key)); self.live_source_table.setItem(row, 0, show)
                     values = (spec.key, spec.source_kind, spec.data_kind, spec.unit or "-", spec.status,
                               "saved" if spec.saved else "live-only")
