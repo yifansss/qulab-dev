@@ -24,6 +24,10 @@ def test_sequence_workspace_has_bundle_browser_and_six_step_generic_sweep(tmp_pa
     widget = create_guided_sequence_widget(QtWidgets, QtCore, QtGui, controller)
     assert [widget.tabText(index) for index in range(widget.count())] == ["Bundle Browser", "Generic Sweep"]
     assert widget.steps.count() == 6
+    assert [widget.steps.item(index).text() for index in range(widget.steps.count())] == [
+        "1 Template / Editor", "2 Select Pulse & Bind Parameter", "3 Configure Sweep Dimensions",
+        "4 Preview & Compare", "5 Validate & Update Workflow", "6 Prepare & Bundle",
+    ]
     assert widget.pages.count() == 9
     names = {widget.fixed_parameter_table.item(row, 0).text() for row in range(widget.fixed_parameter_table.rowCount())}
     names |= {widget.sweep_parameter_table.item(row, 0).text() for row in range(widget.sweep_parameter_table.rowCount())}
@@ -69,7 +73,7 @@ def test_generic_operations_come_from_model_and_macro_updates_workflow(tmp_path:
     assert after == before  # existing macro is updated/reused, never duplicated
 
 
-def test_generic_sweep_exposes_no_curated_or_standalone_mode(tmp_path: Path, monkeypatch) -> None:
+def test_generic_sweep_exposes_generic_mode_and_template_editor(tmp_path: Path, monkeypatch) -> None:
     from qulab.gui.controller import OperatorController
     from qulab.gui.sequence_authoring_view import create_guided_sequence_widget
 
@@ -77,7 +81,7 @@ def test_generic_sweep_exposes_no_curated_or_standalone_mode(tmp_path: Path, mon
     controller.load_config(ROOT / "configs/experiments/dry_run_generic_asg_template_sweep.yaml")
     widget = create_guided_sequence_widget(QtWidgets, QtCore, QtGui, controller)
     assert [widget.mode_combo.itemText(index) for index in range(widget.mode_combo.count())] == ["generic"]
-    assert not widget.editor_button.isVisible()
+    assert not widget.editor_button.isHidden()
 
 
 def test_generic_pulse_binding_and_issue_navigation(tmp_path: Path) -> None:
@@ -97,6 +101,24 @@ def test_generic_pulse_binding_and_issue_navigation(tmp_path: Path) -> None:
     row = next(row for row in range(widget.issues.rowCount())
                if widget.issues.item(row, 1).text() == "sequence_trigger_channel_mismatch")
     widget._issue_clicked(row, 1)
+    assert widget.steps.currentRow() == 1
+
+
+def test_new_target_parameter_immediately_appears_in_sweep_dimensions(tmp_path: Path) -> None:
+    from qulab.gui.controller import OperatorController
+    from qulab.gui.sequence_authoring_view import create_guided_sequence_widget
+
+    _app(); controller = OperatorController(tmp_path / "runs")
+    controller.load_config(ROOT / "configs/experiments/dry_run_generic_asg_template_sweep.yaml")
+    widget = create_guided_sequence_widget(QtWidgets, QtCore, QtGui, controller)
+    widget.pulse_table.selectRow(0)
+    widget.target_alias.setText("new_target")
+    widget.target_parameter.setText("new_axis_s")
+    widget.property_combo.setCurrentText("duration")
+    widget.propagation_combo.setCurrentText("none")
+    widget._apply_target()
+    names = {widget.sweep_parameter_table.item(row, 0).text() for row in range(widget.sweep_parameter_table.rowCount())}
+    assert "new_axis_s" in names
     assert widget.steps.currentRow() == 2
 
 

@@ -6,16 +6,27 @@ from typing import Any, Callable
 
 import yaml
 
-from .sequence_authoring import AUTHORING_STEPS, NormalizedPreview
+from .sequence_authoring import NormalizedPreview
 from .sequence_bridge import default_sequence_editor_path, run_sequence_editor_protocol
-from qulab.paths import resolve_project_path
+from qulab.paths import project_relative, resolve_project_path
 
 STEP_LABELS = (
-    "1 Resource & Mode", "2 Source", "3 Channel & Trigger Roles", "4 Fixed Parameters",
-    "5 Sweep Parameters", "6 Targets & Propagation", "7 Preview & Compare",
-    "8 Validate & Prepare", "9 Bundle / Workflow / Provenance",
+    "Resource & Mode", "1 Template / Editor", "Channel & Trigger Roles", "Fixed Parameters",
+    "3 Configure Sweep Dimensions", "2 Select Pulse & Bind Parameter", "4 Preview & Compare",
+    "5 Validate & Update Workflow", "6 Prepare & Bundle",
 )
-GENERIC_STEP_INDICES = (1, 4, 5, 6, 7, 8)
+GENERIC_STEP_INDICES = (1, 5, 4, 6, 7, 8)
+GENERIC_ISSUE_ROWS = {
+    "resource_mode": 0, "source": 0, "channel_roles": 1,
+    "fixed_parameters": 2, "sweep_parameters": 2, "targets_propagation": 1,
+    "preview_compare": 3, "validation_prepare": 4, "bundle_provenance": 5,
+}
+
+def parameter_table_for_mode(authoring_mode: str, parameter_mode: str) -> str:
+    """Return the visible parameter table used by the authoring mode."""
+    if authoring_mode in {"generic", "standalone"}:
+        return "sweep"
+    return "fixed" if parameter_mode == "fixed" else "sweep"
 
 def create_guided_sequence_widget(QtWidgets: Any, QtCore: Any, QtGui: Any, controller: Any,
                                   *, on_config_changed: Callable[[], None] | None = None) -> Any:
@@ -76,6 +87,7 @@ def create_guided_sequence_widget(QtWidgets: Any, QtCore: Any, QtGui: Any, contr
     class GuidedSequenceWidget(QtWidgets.QWidget):
         def __init__(self) -> None:
             super().__init__(); self.selected_plan: str | None = None; self.current_step = 0; self.parameter_widgets: dict[str, dict[str, Any]] = {}
+            self._editor_target_line: Any | None = None; self._editor_apply_to_plan = False
             self._state = None; self._bridge = _Bridge(self); self._bridge.editor_finished.connect(self._editor_done); self._bridge.prepare_finished.connect(self._prepare_done)
             self._watcher = QtCore.QFileSystemWatcher(self); self._watcher.fileChanged.connect(self._template_changed)
             self._build(); self.refresh()
@@ -95,10 +107,8 @@ def create_guided_sequence_widget(QtWidgets: Any, QtCore: Any, QtGui: Any, contr
             split.setSizes([190, 760, 300]); root.addWidget(split, 1)
             self._build_pages()
             footer = QtWidgets.QHBoxLayout(); back = QtWidgets.QPushButton("Back"); nxt = QtWidgets.QPushButton("Next")
-            validate = QtWidgets.QPushButton("Validate"); macro = QtWidgets.QPushButton("Insert / Update Macro"); self.prepare_button = QtWidgets.QPushButton("Prepare")
             back.clicked.connect(lambda: self.steps.setCurrentRow(max(0, self.steps.currentRow() - 1))); nxt.clicked.connect(lambda: self.steps.setCurrentRow(min(self.steps.count() - 1, self.steps.currentRow() + 1)))
-            validate.clicked.connect(self.refresh); macro.clicked.connect(self._insert_macro); self.prepare_button.clicked.connect(self._prepare)
-            for widget in (back, nxt, validate, macro, self.prepare_button): footer.addWidget(widget)
+            for widget in (back, nxt): footer.addWidget(widget)
             footer.addStretch(1); root.addLayout(footer)
 
         def _build_pages(self) -> None:
@@ -113,9 +123,10 @@ def create_guided_sequence_widget(QtWidgets: Any, QtCore: Any, QtGui: Any, contr
 
         def _source_page(self) -> Any:
             page = QtWidgets.QWidget(); form = QtWidgets.QFormLayout(page); self.provider_combo = QtWidgets.QComboBox(); self.template_line = QtWidgets.QLineEdit()
-            browse = QtWidgets.QPushButton("Browse template"); browse.clicked.connect(self._browse_template); inspect = QtWidgets.QPushButton("Inspect / Apply"); inspect.clicked.connect(self._apply_source)
+            browse = QtWidgets.QPushButton("Browse template"); browse.clicked.connect(lambda: self._browse_template_into(self.template_line)); inspect = QtWidgets.QPushButton("Inspect / Apply"); inspect.clicked.connect(self._apply_source)
             self.editor_button = QtWidgets.QPushButton("Open Standalone Editor"); self.editor_button.clicked.connect(self._open_editor); self.source_status = QtWidgets.QLabel()
-            form.addRow("Pulse resource", self.resource_combo); form.addRow("Base sequence template", self.template_line); form.addRow(browse, inspect); form.addRow(self.source_status); return page
+            controls = QtWidgets.QHBoxLayout(); controls.addWidget(browse); controls.addWidget(self.editor_button); controls.addWidget(inspect)
+            form.addRow("Pulse resource", self.resource_combo); form.addRow("Base sequence template", self.template_line); form.addRow("", controls); form.addRow(self.source_status); return page
 
         def _roles_page(self) -> Any:
             page = QtWidgets.QWidget(); layout = QtWidgets.QVBoxLayout(page); self.roles_table = QtWidgets.QTableWidget(0, 2); self.roles_table.setHorizontalHeaderLabels(["Role", "Confirmed channel"])
@@ -153,10 +164,17 @@ def create_guided_sequence_widget(QtWidgets: Any, QtCore: Any, QtGui: Any, contr
             self.timeline = Timeline(); self.timeline.pulseSelected.connect(self._timeline_pulse_selected); layout.addLayout(controls); layout.addWidget(self.timeline, 1); return page
 
         def _validation_page(self) -> Any:
-            page = QtWidgets.QWidget(); layout = QtWidgets.QVBoxLayout(page); self.validation_summary = QtWidgets.QLabel("Select Validate to refresh issues."); layout.addWidget(self.validation_summary); layout.addStretch(1); return page
+            page = QtWidgets.QWidget(); layout = QtWidgets.QVBoxLayout(page); self.validation_summary = QtWidgets.QLabel("Select Validate to refresh issues.")
+            buttons = QtWidgets.QHBoxLayout(); self.validate_button = QtWidgets.QPushButton("Validate Plan"); self.validate_button.clicked.connect(self.refresh)
+            self.macro_button = QtWidgets.QPushButton("Update Workflow Macro"); self.macro_button.clicked.connect(self._insert_macro)
+            buttons.addWidget(self.validate_button); buttons.addWidget(self.macro_button); buttons.addStretch(1)
+            self.workflow_status = QtWidgets.QLabel("The plan remains a draft until it is linked to the workflow and the YAML is saved."); self.workflow_status.setWordWrap(True)
+            layout.addWidget(self.validation_summary); layout.addLayout(buttons); layout.addWidget(self.workflow_status); layout.addStretch(1); return page
 
         def _provenance_page(self) -> Any:
-            page = QtWidgets.QWidget(); layout = QtWidgets.QVBoxLayout(page); self.provenance = QtWidgets.QPlainTextEdit(); self.provenance.setReadOnly(True); layout.addWidget(self.provenance); return page
+            page = QtWidgets.QWidget(); layout = QtWidgets.QVBoxLayout(page); self.provenance = QtWidgets.QPlainTextEdit(); self.provenance.setReadOnly(True)
+            self.prepare_button = QtWidgets.QPushButton("Prepare Bundle"); self.prepare_button.clicked.connect(self._prepare)
+            layout.addWidget(self.provenance); layout.addWidget(self.prepare_button); return page
 
         def refresh(self) -> None:
             try:
@@ -202,7 +220,9 @@ def create_guided_sequence_widget(QtWidgets: Any, QtCore: Any, QtGui: Any, contr
                 table.setRowCount(0)
                 for field in self._state.parameter_fields:
                     current = raw.get(field.name, {"mode": "fixed", "value": field.default}); mode = str(current.get("mode", "fixed"))
-                    if (mode != "fixed") != swept: continue
+                    destination = parameter_table_for_mode(self._state.mode, mode)
+                    if (destination == "sweep") != swept:
+                        continue
                     row = table.rowCount(); table.insertRow(row); mode_combo = QtWidgets.QComboBox(); modes = ["fixed"] + (["linspace", "range", "explicit"] if field.sweepable else []); mode_combo.addItems(modes); mode_combo.setCurrentText(mode); table.setCellWidget(row, 1, mode_combo)
                     values = (field.name, None, current.get("value", ""), current.get("start", ""), current.get("stop", ""), current.get("points", current.get("step", "")), ", ".join(map(str, current.get("values", ()))), field.unit or "")
                     for column, value in enumerate(values):
@@ -241,11 +261,20 @@ def create_guided_sequence_widget(QtWidgets: Any, QtCore: Any, QtGui: Any, contr
                     item = QtWidgets.QTableWidgetItem(str(value)); item.setData(_user_role(QtCore), issue.step); self.issues.setItem(row, column, item)
             errors = sum(issue.severity == "error" for issue in self._state.issues); warnings = sum(issue.severity == "warning" for issue in self._state.issues)
             self.validation_summary.setText(f"{errors} error(s), {warnings} warning(s); point count {self._state.point_count or 0}")
+            linked = not any(issue.code == "sequence_workflow_link_missing" for issue in self._state.issues)
+            self.workflow_status.setText(
+                "Workflow macro linked. Save the experiment YAML to persist and reuse this scan."
+                if linked else
+                "Plan is still a draft. Select Update Workflow Macro, then save the experiment YAML."
+            )
+            self.macro_button.setEnabled(errors == 0)
+            self.prepare_button.setEnabled(errors == 0 and linked)
 
         def _fill_provenance(self) -> None:
             if not self.selected_plan: self.provenance.clear(); return
             plan = next(item for item in self._state.plans if item.id == self.selected_plan); provenance = controller.get_sequence_provenance(self.selected_plan)
-            lines = [f"plan: {plan.id}", f"state: {plan.state}", f"plan hash: {plan.plan_hash or '(not prepared)'}", f"provider: {plan.provider}", f"revision: {self._state.revision}"]
+            config_path = str(controller.config_path or "(unsaved draft)")
+            lines = [f"plan: {plan.id}", f"state: {plan.state}", f"plan hash: {plan.plan_hash or '(not prepared)'}", f"provider: {plan.provider}", f"revision: {self._state.revision}", f"experiment config: {config_path}", "reuse: load this saved experiment YAML, or Duplicate this plan in Generic Sweep"]
             if provenance is not None: lines.extend(("", yaml.safe_dump(provenance, sort_keys=False)))
             else: lines.extend(("", "No current prepared provenance. Validate and Prepare this revision."))
             self.provenance.setPlainText("\n".join(lines))
@@ -257,14 +286,19 @@ def create_guided_sequence_widget(QtWidgets: Any, QtCore: Any, QtGui: Any, contr
                 self.current_step = int(index); self.pages.setCurrentIndex(int(index))
         def _issue_clicked(self, row: int, column: int) -> None:
             item = self.issues.item(row, column) or self.issues.item(row, 0); step = item.data(_user_role(QtCore)) if item else None
-            if step in AUTHORING_STEPS: self.steps.setCurrentRow(AUTHORING_STEPS.index(step))
+            if step in GENERIC_ISSUE_ROWS: self.steps.setCurrentRow(GENERIC_ISSUE_ROWS[step])
 
         def _new_plan(self) -> None:
             resources = controller.sequence_resource_names()
             if not resources: return
-            dialog = QtWidgets.QDialog(self); form = QtWidgets.QFormLayout(dialog); pid = QtWidgets.QLineEdit("sequence_main"); resource = QtWidgets.QComboBox(); resource.addItems(resources)
-            template = QtWidgets.QLineEdit(); buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel); buttons.accepted.connect(dialog.accept); buttons.rejected.connect(dialog.reject)
+            dialog = QtWidgets.QDialog(self); dialog.setWindowTitle("New Generic Sweep Plan"); form = QtWidgets.QFormLayout(dialog); pid = QtWidgets.QLineEdit("sequence_main"); resource = QtWidgets.QComboBox(); resource.addItems(resources)
+            template = QtWidgets.QLineEdit(); template_controls = QtWidgets.QHBoxLayout(); browse = QtWidgets.QPushButton("Browse"); edit = QtWidgets.QPushButton("Open Editor")
+            browse.clicked.connect(lambda: self._browse_template_into(template)); edit.clicked.connect(lambda: self._launch_editor(template, False))
+            template_controls.addWidget(browse); template_controls.addWidget(edit)
+            buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel); buttons.accepted.connect(dialog.accept); buttons.rejected.connect(dialog.reject)
             for label, widget in (("Plan id", pid), ("Resource", resource), ("Base sequence template", template)): form.addRow(label, widget)
+            form.addRow("", template_controls)
+            note = QtWidgets.QLabel("Creates a plan in the current experiment draft. Use the main Save action to persist and reuse it."); note.setWordWrap(True); form.addRow(note)
             form.addRow(buttons)
             if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted: return
             try: controller.create_guided_sequence_plan(pid.text().strip(), resource.currentText(), "generic", template=template.text().strip() or None); self.selected_plan = pid.text().strip(); self._changed()
@@ -285,14 +319,15 @@ def create_guided_sequence_widget(QtWidgets: Any, QtCore: Any, QtGui: Any, contr
                 controller.change_sequence_mode(self.selected_plan, new_mode, provider=self.provider_combo.currentData(), template=self.template_line.text().strip() or None)
             if self.resource_combo.currentText(): controller.change_sequence_resource(self.selected_plan, self.resource_combo.currentText())
             self._changed()
-        def _browse_template(self) -> None:
-            path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select sequence template", "", "Sequence JSON (*.json);;All files (*)")
-            if path: self.template_line.setText(path)
+        def _browse_template_into(self, line: Any) -> None:
+            current = resolve_project_path(line.text()) or resolve_project_path("configs/sequences")
+            path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select sequence template", str(current or ""), "Sequence JSON (*.json);;All files (*)")
+            if path: line.setText(project_relative(path))
         def _apply_source(self) -> None:
             if not self.selected_plan: return
             controller.change_sequence_mode(self.selected_plan, "generic", template=self.template_line.text().strip() or None)
             if self.resource_combo.currentText(): controller.change_sequence_resource(self.selected_plan, self.resource_combo.currentText())
-            self._changed()
+            self._changed(); self.steps.setCurrentRow(1)
         def _apply_roles(self) -> None:
             roles = {self.roles_table.item(r, 0).text(): self.roles_table.item(r, 1).text() for r in range(self.roles_table.rowCount()) if self.roles_table.item(r, 0) and self.roles_table.item(r, 1)}
             if self.selected_plan: controller.update_sequence_roles(self.selected_plan, roles, confirmed=True); self._changed()
@@ -310,7 +345,7 @@ def create_guided_sequence_widget(QtWidgets: Any, QtCore: Any, QtGui: Any, contr
                     controller.update_sequence_plan_parameter(self.selected_plan, name, patch)
             order = [self.sampling_order.item(index).text() for index in range(self.sampling_order.count())]
             controller.set_sequence_plan_sampling_order(self.selected_plan, order)
-            self._changed()
+            self._changed(); self.steps.setCurrentRow(3)
         def _move_sampling(self, delta: int) -> None:
             row = self.sampling_order.currentRow(); target = row + delta
             if row < 0 or target < 0 or target >= self.sampling_order.count(): return
@@ -333,7 +368,7 @@ def create_guided_sequence_widget(QtWidgets: Any, QtCore: Any, QtGui: Any, contr
         def _apply_target(self) -> None:
             row = self.pulse_table.currentRow()
             if not self.selected_plan or row < 0: return
-            controller.update_sequence_target_transform(self.selected_plan, self.target_alias.text().strip(), self.pulse_table.item(row, 0).text(), int(self.pulse_table.item(row, 1).text()), parameter=self.target_parameter.text().strip(), property_name=self.property_combo.currentText(), propagation=self.propagation_combo.currentText(), group=self.target_group.text().strip() or None); self._changed()
+            controller.update_sequence_target_transform(self.selected_plan, self.target_alias.text().strip(), self.pulse_table.item(row, 0).text(), int(self.pulse_table.item(row, 1).text()), parameter=self.target_parameter.text().strip(), property_name=self.property_combo.currentText(), propagation=self.propagation_combo.currentText(), group=self.target_group.text().strip() or None); self._changed(); self.steps.setCurrentRow(2)
         def _add_anchor(self) -> None:
             if self.selected_plan: controller.add_sequence_anchor(self.selected_plan, self.constraint_target.text().strip(), self.constraint_reference.text().strip(), self.constraint_offset.value()); self._changed()
         def _refresh_preview(self) -> None:
@@ -347,7 +382,7 @@ def create_guided_sequence_widget(QtWidgets: Any, QtCore: Any, QtGui: Any, contr
                 self.preview_coords.setText(f"{coords} · duration {self.timeline.preview.duration_s:.6g} s")
             except Exception as exc: self.preview_coords.setText(str(exc)); self.timeline.set_preview(None)
         def _insert_macro(self) -> None:
-            if self.selected_plan: controller.insert_sequence_macro(self.selected_plan); self._changed()
+            if self.selected_plan: controller.insert_sequence_macro(self.selected_plan); self._changed(); self.steps.setCurrentRow(5)
         def _prepare(self) -> None:
             self.prepare_button.setEnabled(False)
             revision = self._state.revision if self._state is not None else None
@@ -361,15 +396,24 @@ def create_guided_sequence_widget(QtWidgets: Any, QtCore: Any, QtGui: Any, contr
             if on_config_changed: on_config_changed()
             self.refresh()
         def _open_editor(self) -> None:
-            if not self.selected_plan: return
-            self.editor_button.setEnabled(False); editor = default_sequence_editor_path(); sequence = self.template_line.text().strip() or None
+            self._launch_editor(self.template_line, True)
+
+        def _launch_editor(self, target_line: Any, apply_to_plan: bool) -> None:
+            self._editor_target_line = target_line; self._editor_apply_to_plan = apply_to_plan
+            self.editor_button.setEnabled(False); editor = default_sequence_editor_path(); sequence = target_line.text().strip() or None
             def work(): self._bridge.editor_finished.emit(run_sequence_editor_protocol(editor, sequence))
             threading.Thread(target=work, daemon=True).start()
         def _editor_done(self, result: Any) -> None:
             self.editor_button.setEnabled(True); self.source_status.setText(result.message or ("Saved" if result.ok else "Failed"))
             if result.ok and result.saved_artifact:
-                try: controller.accept_sequence_editor_result(self.selected_plan, result.saved_artifact); self._changed()
+                saved_path = project_relative(result.saved_artifact.get("path"))
+                try:
+                    if self._editor_target_line is not None: self._editor_target_line.setText(saved_path)
+                    if self._editor_apply_to_plan and self.selected_plan:
+                        artifact = dict(result.saved_artifact); artifact["path"] = saved_path
+                        controller.accept_sequence_editor_result(self.selected_plan, artifact); self._changed()
                 except Exception as exc: self.source_status.setText(str(exc))
+            self._editor_target_line = None; self._editor_apply_to_plan = False
         def _template_changed(self, path: str) -> None:
             if self.selected_plan:
                 controller.mark_sequence_template_stale(self.selected_plan)

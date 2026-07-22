@@ -90,6 +90,17 @@ def test_dynamic_generic_fields_roles_targets_and_normalized_preview() -> None:
     assert first.channels and first.duration_s > 0
 
 
+def test_target_binding_creates_a_visible_dynamic_parameter() -> None:
+    config = load_experiment_config(ROOT / "configs/experiments/dry_run_generic_asg_template_sweep.yaml")
+    model = SequenceAuthoringModel(config); plan_id = "generic_rabi"
+    model.update_target_transform(plan_id, "extra_pulse", "Channel 1", 0, parameter="extra_axis_s",
+                                  property_name="start", propagation="none")
+    parameter = config["sequence_plans"][plan_id]["parameters"]["extra_axis_s"]
+    assert parameter["mode"] == "fixed"
+    assert parameter["transform"]["target"] == "extra_pulse"
+    assert "extra_axis_s" in {item.name for item in model.parameter_fields(plan_id)}
+
+
 def test_invalid_parameter_edit_is_transactional_and_non_sweepable_fails() -> None:
     config = load_experiment_config(ROOT / "configs/experiments/dry_run_rabi_sequence_family.yaml")
     model = SequenceAuthoringModel(config); plan_id = "rabi"

@@ -171,6 +171,17 @@ Sequence Sweep 用于把 P9 bundle runtime 变成现场可用的 sequence scan a
 - `Bundle Browser`：只读浏览直接声明或 Prepare 后 materialize 的 bundle、entry coordinates、pulse table、first/last overlay 和 difference。候选校验临时目录中的 generated bundle 不显示。
 - `Generic Sweep`：解析 immutable ASG template，把 sweep 参数绑定到 pulse start/duration/end/shift，配置 linspace/range/explicit、propagation/anchor，并执行 Preview 与 Prepare。
 
+Generic Sweep 左侧按实际创建顺序排列：
+
+1. `Template / Editor`：Browse 或 Open Editor 选择项目内 base sequence；项目内路径写成相对路径。
+2. `Select Pulse & Bind Parameter`：选择 channel/pulse，命名 target 和 parameter，并选择 duration/start/end/shift/gap 与 propagation。
+3. `Configure Sweep Dimensions`：新绑定的 parameter 即使初始为 fixed 也显示在此页，可切换为 linspace/range/explicit。
+4. `Preview & Compare`：检查 first/current/last、overlay 和 difference。
+5. `Validate & Update Workflow`：无 error 后插入或确认唯一的 `sequence_sweep` macro。
+6. `Prepare & Bundle`：只有 workflow 已关联且 validation 无 error 时才能 materialize bundle。
+
+`New` 只在当前 experiment draft 的 `sequence_plans` 中创建 plan，不会单独写文件，也不会自动运行。主窗口 `Save` 后，该 plan 随实验 YAML 持久化；以后载入该 YAML 即可调用，或在同一配置中用 `Duplicate` 派生新扫描。Prepare 后的 entries 可在 `Bundle Browser` 查看，但 bundle 不是 authoring 配置的替代品。
+
 Curated provider 和 standalone editor protocol 继续作为兼容底层保留，但不再作为 Operator 的独立 authoring mode，避免显示与当前任务无关的 provider、role 和 fixed-parameter 表单。
 
 推荐布局：
