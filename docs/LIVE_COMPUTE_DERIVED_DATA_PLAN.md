@@ -611,7 +611,21 @@ Those belong in user modules under `analysis_modules/` or later optional helper
 packages. The core framework only defines how such modules are loaded, run,
 displayed, stored, and tracked.
 
-## 18. Immediate Next Tasks
+## 18. Live plotting completion
+
+P10.3 established live catalog/model/controller and sequence-context contracts.
+P10.6 adds the real Qt renderer and stable Raw/Derived checkbox wiring. The same
+canvas API now serves Live View and Data Viewer, preferring pyqtgraph,
+Matplotlib, then native Qt. Compatible scalar raw/derived values can overlay;
+2-D scalar data forms a NaN-backed heatmap; vector and matrix values select a
+point and optional channel. Missing explicit trace coordinates use
+`sample_index` rather than pretending to be hardware time.
+
+Pause and clear are strictly view operations. They neither stop the compute
+engine nor alter acquisition, saved/live-only policy, or RunStore contents.
+Unsupported values are marked per-key so other sources continue to update.
+
+## 19. Immediate Next Tasks
 
 P10.1-P10.5 are implemented. The thread backend deliberately uses one worker,
 a bounded queue, and serialized EventBus subscriber dispatch. It cannot kill

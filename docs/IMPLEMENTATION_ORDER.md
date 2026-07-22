@@ -341,6 +341,7 @@ Phase E 核心验收：用户只修改 GUI/YAML 中的 Rabi `tau_s` 范围即可
 3. Phase C / P10.3（已完成）：raw/derived Live Run catalog、plot/dimension selection、module status 和 P9 sequence context。
 4. Phase D / P10.4（已完成）：完整 provenance、immutable recompute CLI/result groups 和 group-aware RunReader/DatasetModel。
 5. Phase E / P10.5（已完成）：有界单 worker async queue、serialized thread-safe dispatch、metrics、五种 backpressure 和 drain 策略。
+6. Phase F / P10.6（实现完成，Qt 手工验收依赖有 Qt 的实验电脑）：真实 line/overlay/heatmap/trace renderer、稳定 Raw/Derived checkbox、display pause/clear/auto-follow、共享 Data Viewer canvas 与 deterministic showcase。无 Qt 环境执行 headless/integration 测试并跳过 widget test；可见窗口和截图验收不得伪造。
 
 GUI 交叉规划：`docs/SEQUENCE_LIVE_COMPUTE_GUI_INTEGRATION_PLAN.md`。
 

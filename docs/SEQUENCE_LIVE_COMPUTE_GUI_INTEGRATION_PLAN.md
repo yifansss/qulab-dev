@@ -267,3 +267,18 @@ stable.
   completed-run storage.
 - Sequence authoring and live analysis remain separate but coordinated views of
   the same prepared experiment.
+
+## 12. P10.6 implementation status
+
+P10.3 delivered the Qt-free catalog, buffer, selection model, controller hooks,
+module status, and read-only sequence context. P10.6 completes the presentation
+path: source checkboxes are wired to controller selection; scalar line/overlay,
+2-D heatmap, and point/channel trace use the shared Data Viewer canvas; display
+updates are bounded to 200 queued events per timer tick and coalesced to one
+refresh. Pause, clear, and auto-follow are display controls only. Storage policy
+continues to come exclusively from module/config `save` settings. A trace with
+no declared axis is labelled `sample_index`.
+
+Qt/manual acceptance remains environment-dependent; the automated widget suite
+is skipped when no Qt binding is installed rather than substituting an import
+smoke test for rendered behavior.

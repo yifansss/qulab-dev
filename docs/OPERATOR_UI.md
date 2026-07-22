@@ -404,12 +404,14 @@ PYTHONPATH=src python -m qulab.gui.pyqt_operator_app
 
 - 仍然只支持 mock/dry-run，不连接真实硬件。
 - Stop 仍是诚实占位：记录请求并阻止重复 Start，不承诺可靠中途取消。
-- Heatmap 目前以 point table 作为二维扫描 MVP 预览；后续可加入 Qt painting heatmap 或 pyqtgraph。
+- P10.6 Live Run 已提供真实 line、multi-series overlay、heatmap、vector/matrix trace 和诊断 table；Raw/Derived checkbox 只影响显示，不改变模块 `save` policy。
 - Workflow editor 还没有拖拽排序、完整 step library、复杂 schema validation 或 run browser。
 - 还没有完整的 `Direct Control` submode；真实硬件手动控制需要先接入 bench safety workflow。
 - ASG sequence bridge 当前只做 resource `sequence_file` 编辑、外部 editor 启动和 metadata/hash 预览；不实现 pulse compiler，也不连接或启动真实硬件。
 - Live Run 已接入 raw/derived catalog、saved/live-only/waiting/error 状态、line/heatmap/trace selection model、module queue/latency 状态和只读 sequence context；公式仍只存在于 analysis modules。
 - 当前Sequence Sweep视图是紧凑表格/文本预览；完整的图形pulse/constraint编辑器仍可继续增强。Prepare与preview不会连接硬件。
+
+Live View renderer 按 pyqtgraph、Matplotlib、原生 Qt 的顺序 fallback，并与 Data Viewer 共用入口。Pause/clear 只暂停重绘或清空有界显示 buffer，采集与 RunStore 不受影响。无显式 trace 轴时使用 `sample_index`。硬件实验台启动前可先运行 `configs/experiments/live_view_showcase.yaml`，详见 `docs/LIVE_VIEW.md`。
 
 P9/P10 GUI 汇合规划见 `docs/SEQUENCE_LIVE_COMPUTE_GUI_INTEGRATION_PLAN.md`：
 

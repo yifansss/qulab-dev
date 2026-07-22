@@ -59,6 +59,9 @@ The PyQt/PySide entry first tries `PySide6`, then `PyQt6`. If neither is install
 The GUI defaults to `configs/experiments/dry_run_rabi.yaml`. You can load Rabi or ODMR, edit common scan/average parameters, click Prepare, then Start. It shows mock resources, sync/preflight issues, procedure tree, event log, a simple Canvas line plot, and the final run path under `runs/`.
 The PyQt/PySide Operator Console embeds the same read-only data viewer panel used by `qulab.viewer.pyqt_viewer_app`; after a run completes, the Run Data tab opens the new run path through `RunReader`, `DatasetModel`, and `SliceController`.
 
+For the live raw/derived plotting workflow and deterministic showcase, see
+[docs/LIVE_VIEW.md](docs/LIVE_VIEW.md).
+
 Advanced data viewing:
 
 - `metadata.json`, `events.jsonl`, `points.jsonl`, `data.jsonl`, and SQLite remain the audit/index layer.
