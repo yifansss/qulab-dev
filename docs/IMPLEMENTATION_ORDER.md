@@ -379,5 +379,8 @@ Worker prompts：
 - `prompts/011_followup_p11_3a_capability_action_schema_registry.md`
 - `prompts/011_followup_p11_3b_guided_workflow_composer.md`
 - `prompts/011_followup_p11_3c_guided_sequence_authoring.md`
+- `prompts/011_followup_p11_3c_gui_guided_sequence_integration.md`
 
 重要边界：历史现场只恢复记录过的软件配置、数据、事件和 provenance，绝不自动恢复硬件输出；GUI 仍保存 canonical YAML；core workflow 不展开 pulse-level sequence；所有 load/authoring validation 默认不连接硬件。
+
+当前补充状态：P11.3C-GUI 已完成。现有唯一 Qt `Sequence Sweep` tab 已切换到三种 mode 共用的九阶段 guided view，并接入 provider-driven 参数表单、sampling order、generic pulse target/propagation/constraint、真实 timeline/compare、inline issue navigation、standalone editor result、后台 Prepare 和只读 provenance。Qt-free model 与 Qt presenter/view 保持分层；preview/validate 不连接硬件，物理线缆验证仍需 bench acceptance。
