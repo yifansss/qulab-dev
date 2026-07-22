@@ -13,13 +13,12 @@ bench:
   requires_allow_output: true
   requires_allow_ao: false
   wiring:
-    - ASG ch1 preview gate -> oscilloscope CH1.
-    - ASG ch6 NI start-trigger gate -> oscilloscope CH2.
+    - ASG ch1 trigger pulse -> oscilloscope CH1.
     - Do not connect ASG outputs to laser/MW switches until TTL polarity and levels are verified.
   operator_steps:
     - Confirm ASG outputs are connected only to oscilloscope or safe dummy inputs.
     - Run with --allow-output only after checking all channels.
-    - Verify pulse widths, relative delays, repetition, polarity, and voltage levels.
+    - Verify the ch1 pulse width, delay, repetition, polarity, and voltage level.
   expected_observation:
     - Oscilloscope should show the selected sequence pulses.
     - No NI data is required for this test.

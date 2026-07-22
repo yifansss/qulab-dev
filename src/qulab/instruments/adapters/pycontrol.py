@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import importlib
 import os
+import re
 import sys
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
 from qulab.paths import project_root, resolve_project_path
+from qulab.sequence_generation.asg_script import compile_asg_sequence_json, is_asg_sequence_json
 from qulab.instruments import capabilities as caps
 from qulab.instruments.base import (
     InstrumentAdapter,
@@ -246,6 +248,7 @@ class PycontrolASGAdapter(_PycontrolAdapterBase):
         self.armed = False
         self.running = False
         self.compiled_code: str | None = None
+        self.output_channels: list[int] = []
 
     def connect(self) -> None:
         driver_cls = _load_driver(self.config, "PulseGenerator.driver", "ASG24100Driver")
@@ -279,6 +282,8 @@ class PycontrolASGAdapter(_PycontrolAdapterBase):
         return value
 
     def compile_sequence(self) -> str | None:
+        if self.compiled_code and is_asg_sequence_json(self.compiled_code):
+            self.compiled_code = compile_asg_sequence_json(self.compiled_code)
         return self.compiled_code
 
     def configure_trigger(self, **kwargs: Any) -> dict[str, Any]:
@@ -296,7 +301,21 @@ class PycontrolASGAdapter(_PycontrolAdapterBase):
 
     def arm(self) -> bool:
         self._ensure_connected()
+        self.compile_sequence()
         if self.compiled_code and hasattr(self._driver, "upload_and_run"):
+            self.output_channels = sorted(
+                {int(channel) for channel in re.findall(r"ASG_OUT\s*\[\s*(\d+)\s*\]", self.compiled_code)}
+            )
+            configure_outputs = getattr(self._driver, "configure_output_channels", None)
+            if self.output_channels and callable(configure_outputs):
+                _require_success(
+                    configure_outputs(
+                        channel_limit=max(self.output_channels),
+                        voltage_level=int(self.config.get("voltage_level", 0)),
+                        impedance=int(self.config.get("impedance", 0)),
+                    ),
+                    "ASG24100.configure_output_channels",
+                )
             _require_success(self._driver.upload_and_run(self.compiled_code, loop=int(self.config.get("loop", 1)), arm_only=True), "ASG24100.upload_and_run(arm_only)")
         self.armed = True
         return True
@@ -337,6 +356,9 @@ class PycontrolASGAdapter(_PycontrolAdapterBase):
             "address": self.address,
             "sequence": self.sequence_snapshot(),
             "trigger": dict(self.trigger_config),
+            "output_channels": list(self.output_channels),
+            "voltage_level": int(self.config.get("voltage_level", 0)),
+            "impedance": int(self.config.get("impedance", 0)),
             "armed": self.armed,
             "running": self.running,
             "status": status,
@@ -523,11 +545,18 @@ class PycontrolNIAdapter(_PycontrolAdapterBase):
         if self._uses_sync_driver():
             method = getattr(self._driver, "read_analog_trace", None)
             if callable(method):
-                return method(timeout=timeout)
+                result = method(timeout=timeout)
+                self.armed = False
+                if isinstance(result, dict):
+                    data = result.get("data")
+                    if isinstance(data, dict) and "analog_trace" in data:
+                        return data["analog_trace"]
+                return result
         channels = self.ai_config.get("channels") or self.config.get("ai_channels") or ["ai0"]
         sample_rate = float(self.ai_config.get("sample_rate") or self.config.get("ai_sample_rate") or 1e3)
         samples = int(self.ai_config.get("samples") or self.config.get("ai_samples") or 100)
         data = self._driver.read_analog(channels, sample_rate, samples)
+        self.armed = False
         return [item.tolist() if hasattr(item, "tolist") else item for item in data]
 
     def read(self, timeout: float | None = None) -> Any:

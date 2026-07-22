@@ -23,7 +23,7 @@ def test_sequence_inspection_accepts_project_relative_path() -> None:
 
     assert info.exists is True
     assert info.sha256
-    assert "ch6" in info.channels
+    assert info.channels == ["ch1"]
 
 
 def test_default_sequence_editor_is_project_local() -> None:

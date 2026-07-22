@@ -69,10 +69,12 @@ class _Task:
         self.timing = _Timing()
         self.triggers = types.SimpleNamespace(start_trigger=_StartTrigger())
         self.started = False
+        self.start_count = 0
         self.writes = []
 
     def start(self):
         self.started = True
+        self.start_count += 1
 
     def stop(self):
         self.started = False
@@ -229,6 +231,53 @@ def test_ai_external_trigger_normalizes_channels_and_omits_null_sample_clock(mon
         assert config["start_trigger"] == "/Dev2/PFI0"
         assert config["sample_clock"] is None
         assert "source" not in ai_task.timing.sample_clock
+    finally:
+        _cleanup_pycontrol_imports()
+
+
+def test_arm_starts_external_trigger_task_before_read_and_start_is_idempotent(monkeypatch) -> None:
+    try:
+        driver_cls = _load_driver(monkeypatch)
+        driver = driver_cls(verbose=False)
+        driver.connect("Dev2")
+        driver.configure_ai_external_trigger(
+            channels=["ai1"],
+            sample_rate=1_000_000,
+            samples=3,
+            start_trigger="PFI1",
+        )
+        ai_task = driver._tasks["ai"]
+
+        assert ai_task.started is False
+        driver.arm()
+        assert ai_task.started is True
+        assert driver.snapshot()["started"] is True
+
+        driver.start()
+        assert ai_task.started is True
+        assert ai_task.start_count == 1
+    finally:
+        _cleanup_pycontrol_imports()
+
+
+def test_reconfigure_rearms_a_fresh_external_trigger_task(monkeypatch) -> None:
+    try:
+        driver_cls = _load_driver(monkeypatch)
+        driver = driver_cls(verbose=False)
+        driver.connect("Dev2")
+
+        for _ in range(2):
+            driver.configure_ai_external_trigger(
+                channels=["ai1"],
+                sample_rate=1_000_000,
+                samples=3,
+                start_trigger="PFI1",
+            )
+            ai_task = driver._tasks["ai"]
+            driver.arm()
+            assert ai_task.started is True
+            assert ai_task.start_count == 1
+            driver.read()
     finally:
         _cleanup_pycontrol_imports()
 

@@ -59,6 +59,8 @@ class NISyncDAQDriver:
         return {'kind': 'counter_bins', 'data': {'photon_bins': [1, 2]}, 'metadata': {'timeout': timeout}}
     def read_counts_binned(self, timeout=None):
         return self.read(timeout)
+    def read_analog_trace(self, timeout=None):
+        return {'kind': 'analog_trace', 'data': {'analog_trace': [[1.0, 2.0]]}, 'metadata': {'timeout': timeout}}
     def set_ao_static(self, channel, voltage):
         return True
     def wait_settle(self, seconds):
@@ -130,6 +132,28 @@ def test_pycontrol_ni_stop_accepts_false_return_as_stopped(tmp_path) -> None:
         adapter.connect()
 
         assert adapter.stop() is False
+    finally:
+        _clear_data_acquisition_modules()
+
+
+def test_pycontrol_ni_read_analog_returns_trace_payload(tmp_path) -> None:
+    try:
+        _write_pycontrol_stub(tmp_path)
+        _clear_data_acquisition_modules()
+        adapter = PycontrolNIAdapter(
+            "daq",
+            {
+                "device": "Dev2",
+                "pycontrol_path": str(tmp_path),
+                "driver": "sync",
+                "strict_hardware": False,
+            },
+        )
+        adapter.connect()
+        adapter.arm()
+
+        assert adapter.read_analog(timeout=2.0) == [[1.0, 2.0]]
+        assert adapter.armed is False
     finally:
         _clear_data_acquisition_modules()
 

@@ -2,7 +2,7 @@ schema_version: 1
 name: bench_05_pse_ai1_asg_triggered_trace
 description: >
   PSE detector AI1 trace triggered by ASG. Connect the PSE analog output to
-  NI AI1 and ASG ch6 to NI PFI2 as AI start trigger. ASG owns point timing;
+  NI AI1 and ASG ch1 to NI PFI1 as AI start trigger. ASG owns point timing;
   NI records a finite AI1 trace. Use oscilloscope to verify the trigger edge
   and detector analog response line up.
 tags: [bench, pse, detector, ai1, asg_master, external_trigger]
@@ -14,13 +14,13 @@ bench:
   requires_allow_ao: false
   wiring:
     - PSE analog output -> NI Dev2/ai1.
-    - ASG ch6 -> NI Dev2/PFI2 AI start_trigger.
+    - ASG ch1 -> NI Dev2/PFI1 AI start_trigger.
     - Optional ASG laser/readout gate channel -> oscilloscope CH1.
-    - Oscilloscope CH2 on ASG ch6 trigger, CH3 on PSE analog output.
+    - Oscilloscope CH2 on ASG ch1 trigger, CH3 on PSE analog output.
   operator_steps:
     - Confirm PSE AI1 dark trace with bench_01 first.
     - Confirm ASG TTL on scope with bench_03 first.
-    - Connect ASG trigger to NI PFI2 and PSE analog output to AI1.
+    - Connect ASG ch1 to NI PFI1 and PSE analog output to AI1.
     - Run this config with --allow-output.
     - Compare AI trace start with ASG trigger on scope.
   expected_observation:
@@ -35,6 +35,8 @@ resources:
     address: auto
     simulation: false
     pycontrol_path: drivers/pycontrol
+    voltage_level: 0
+    impedance: 0
     sequence_file: configs/sequences/asg_ai1_trigger_smoke.json
   daq:
     adapter: pycontrol_ni
@@ -47,8 +49,8 @@ resources:
 sync:
   master: asg
   triggers:
-    - source: asg.ch6
-      target: daq.PFI2
+    - source: asg.ch1
+      target: daq.PFI1
       edge: rising
       purpose: ai_start_trigger
   order:
@@ -77,7 +79,7 @@ procedure:
                   channels: [ai1]
                   sample_rate: 1000000
                   samples: 5000
-                  start_trigger: PFI2
+                  start_trigger: PFI1
                   edge: rising
                   terminal_config: DIFF
               - run:
@@ -87,7 +89,7 @@ procedure:
                     - call: daq.arm
                     - call: asg.arm
                     - call: asg.start
-                    - call: daq.read
+                    - call: daq.read_analog
                       save_as: pse_ai1_trace
 
 cleanup:

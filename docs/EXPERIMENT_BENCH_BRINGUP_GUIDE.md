@@ -441,19 +441,19 @@ address: auto
 
 如果自动搜索不稳定，改为具体设备地址，具体格式以 `drivers/pycontrol/PulseGenerator/driver.py` 为准。
 
-ASG 到 NI 触发默认：
+当前 PSE AI trace bench 的实际触发连接：
 
 ```text
-ASG ch6 -> NI PFI2 作为 AI start_trigger
-ASG ch5 -> NI PFI1 作为 counter sample_clock
+ASG ch1 -> NI PFI1 作为 AI start_trigger
 ```
 
-对应 YAML：
+对应 AI YAML：
 
 ```yaml
-start_trigger: PFI2
-sample_clock: PFI1
+start_trigger: PFI1
 ```
+
+Counter bench 使用独立的 sample-clock/count-source 接线，不应直接套用这条 AI start-trigger 连接。
 
 如果实际接线不同，要同步修改：
 
@@ -469,7 +469,7 @@ daq.configure_counter_external_clock.args.start_trigger
 - TTL 电平。
 - 脉宽。
 - 极性。
-- 哪个 ASG 物理通道对应 YAML 里的 ch5/ch6。
+- 哪个 ASG 物理通道对应 YAML 里的 trigger source。
 
 ### 4.6 微波源 LMX 参数
 
@@ -734,9 +734,9 @@ PYTHONPATH=src python -m qulab.scripts.hardware_check --config configs/experimen
 
 ```text
 PSE analog output -> NI AI1
-ASG ch6 -> NI PFI2 AI start_trigger
+ASG ch1 -> NI PFI1 AI start_trigger
 示波器 CH1 -> ASG relevant gate/pulse
-示波器 CH2 -> ASG ch6 trigger
+示波器 CH2 -> ASG ch1 trigger
 示波器 CH3 -> PSE analog output
 ```
 
@@ -782,9 +782,9 @@ Qulab 记录 AI1 trace
 ```text
 NI AO0 -> safe slow-control input 或 loopback target
 PSE analog output -> NI AI1
-ASG ch6 -> NI PFI2 AI start_trigger
+ASG ch1 -> NI PFI1 AI start_trigger
 示波器 CH1 -> AO0
-示波器 CH2 -> ASG ch6
+示波器 CH2 -> ASG ch1
 示波器 CH3 -> PSE analog output
 ```
 

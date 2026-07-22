@@ -14,8 +14,8 @@ bench:
   wiring:
     - NI Dev2/ao0 -> safe slow-control input or loopback target.
     - PSE analog output -> NI Dev2/ai1.
-    - ASG ch6 -> NI Dev2/PFI2 AI start_trigger.
-    - Oscilloscope CH1 on AO0, CH2 on ASG ch6, CH3 on PSE analog output.
+    - ASG ch1 -> NI Dev2/PFI1 AI start_trigger.
+    - Oscilloscope CH1 on AO0, CH2 on ASG ch1, CH3 on PSE analog output.
   operator_steps:
     - Verify bench_02 AO0/AI1 loopback before connecting AO0 to any device.
     - Verify bench_05 ASG-triggered PSE trace before enabling mixed scan.
@@ -33,6 +33,8 @@ resources:
     address: auto
     simulation: false
     pycontrol_path: drivers/pycontrol
+    voltage_level: 0
+    impedance: 0
     sequence_file: configs/sequences/asg_ai1_trigger_smoke.json
   daq:
     adapter: pycontrol_ni
@@ -45,8 +47,8 @@ resources:
 sync:
   master: asg
   triggers:
-    - source: asg.ch6
-      target: daq.PFI2
+    - source: asg.ch1
+      target: daq.PFI1
       edge: rising
       purpose: ai_start_trigger
   order:
@@ -80,7 +82,7 @@ procedure:
                   channels: [ai1]
                   sample_rate: 1000000
                   samples: 5000
-                  start_trigger: PFI2
+                  start_trigger: PFI1
                   edge: rising
                   terminal_config: DIFF
               - run:
@@ -90,7 +92,7 @@ procedure:
                     - call: daq.arm
                     - call: asg.arm
                     - call: asg.start
-                    - call: daq.read
+                    - call: daq.read_analog
                       save_as: pse_ai1_trace
 
 cleanup:
