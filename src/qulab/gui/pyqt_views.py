@@ -14,6 +14,7 @@ from qulab.paths import resolve_project_path
 from .controller import OperatorController
 from .models import format_parameter_value, parse_parameter_value
 from .plot_model import PlotSeries
+from .plot_canvas import LineSeriesView, scientific_plot_canvas_class
 from .qt_compat import QT_AVAILABLE, QtCore, QtGui, QtWidgets, missing_qt_message
 from .sequence_bridge import default_sequence_editor_path, open_sequence_editor
 from .theme import classic_qt_stylesheet
@@ -97,7 +98,7 @@ if QT_AVAILABLE:
 
 
     class PyQtOperatorWindow(QtWidgets.QMainWindow):
-        def __init__(self, controller: OperatorController | None = None) -> None:
+        def __init__(self, controller: OperatorController | None = None, config_path: Path | str | None = None) -> None:
             super().__init__()
             self.controller = controller or OperatorController(PROJECT_ROOT / "runs")
             self.event_queue: queue.Queue[Any] = queue.Queue()
@@ -112,7 +113,8 @@ if QT_AVAILABLE:
             self.sequence_watcher = QtCore.QFileSystemWatcher(self)
             self.sequence_watcher.fileChanged.connect(self._on_sequence_file_changed)
             self._apply_style()
-            self._load_config(DEFAULT_CONFIG)
+            self._load_config(Path(config_path) if config_path else DEFAULT_CONFIG)
+            self._live_signature: tuple[Any, ...] | None = None
             self.timer = QtCore.QTimer(self)
             self.timer.timeout.connect(self._drain_events)
             self.timer.start(80)
@@ -175,23 +177,43 @@ if QT_AVAILABLE:
             source_layout = QtWidgets.QVBoxLayout(sources)
             source_layout.setContentsMargins(0, 0, 0, 0)
             source_layout.addWidget(QtWidgets.QLabel("Raw / Derived Sources"))
-            self.live_source_table = QtWidgets.QTableWidget(0, 4)
-            self.live_source_table.setHorizontalHeaderLabels(["Key", "Source", "Kind", "Storage"])
+            self.live_source_filter = QtWidgets.QLineEdit(); self.live_source_filter.setPlaceholderText("Filter sources…")
+            source_layout.addWidget(self.live_source_filter)
+            self.live_source_table = QtWidgets.QTableWidget(0, 7)
+            self.live_source_table.setHorizontalHeaderLabels(["Show", "Key", "Source", "Kind", "Unit", "State", "Storage"])
             self.live_source_table.horizontalHeader().setStretchLastSection(True)
             source_layout.addWidget(self.live_source_table)
             controls = QtWidgets.QHBoxLayout()
-            self.live_plot_type = QtWidgets.QComboBox(); self.live_plot_type.addItems(["line", "heatmap", "trace", "table"])
+            self.live_plot_type = QtWidgets.QComboBox(); self.live_plot_type.addItems(["Auto", "Line", "Heatmap", "Trace", "Table"])
             self.live_x_dim = QtWidgets.QComboBox(); self.live_y_dim = QtWidgets.QComboBox()
             controls.addWidget(self.live_plot_type); controls.addWidget(self.live_x_dim); controls.addWidget(self.live_y_dim)
             source_layout.addLayout(controls)
+            self.live_selector_form = QtWidgets.QFormLayout(); self.live_selector_widgets: dict[str, Any] = {}
+            source_layout.addLayout(self.live_selector_form)
             live_splitter.addWidget(sources)
 
             center = QtWidgets.QWidget(); center_layout = QtWidgets.QVBoxLayout(center); center_layout.setContentsMargins(0, 0, 0, 0)
-            self.plot = LinePlotWidget()
-            self.preview_table = QtWidgets.QTableWidget(0, 4)
-            self.preview_table.setHorizontalHeaderLabels(["point_id", "coords", "x", "y"])
+            Canvas = scientific_plot_canvas_class(QtWidgets, QtCore, QtGui)
+            self.plot = Canvas()
+            display_controls = QtWidgets.QHBoxLayout()
+            self.live_point = QtWidgets.QComboBox(); self.live_channel = QtWidgets.QComboBox()
+            self.live_pause = QtWidgets.QCheckBox("Pause display"); self.live_auto_follow = QtWidgets.QCheckBox("Auto-follow"); self.live_auto_follow.setChecked(True)
+            clear = QtWidgets.QPushButton("Clear display"); reset = QtWidgets.QPushButton("Reset view")
+            for widget in (QtWidgets.QLabel("Point"), self.live_point, QtWidgets.QLabel("Channel"), self.live_channel,
+                           self.live_pause, self.live_auto_follow, clear, reset): display_controls.addWidget(widget)
+            center_layout.addLayout(display_controls)
+            self.live_plot_status = QtWidgets.QLabel("No live data selected")
+            self.preview_table = QtWidgets.QTableWidget(0, 3)
+            self.preview_table.setHorizontalHeaderLabels(["point_id", "coords", "values"])
             self.preview_table.horizontalHeader().setStretchLastSection(True)
-            center_layout.addWidget(self.plot, 2); center_layout.addWidget(self.preview_table, 1)
+            center_layout.addWidget(self.live_plot_status); center_layout.addWidget(self.plot, 2); center_layout.addWidget(self.preview_table, 1)
+            for combo in (self.live_plot_type, self.live_x_dim, self.live_y_dim, self.live_point, self.live_channel):
+                combo.currentTextChanged.connect(self._live_controls_changed)
+            self.live_source_table.itemChanged.connect(self._live_source_changed)
+            self.live_source_filter.textChanged.connect(self._apply_live_filter)
+            self.live_pause.toggled.connect(lambda paused: None if paused else self._render_live_plot())
+            self.live_auto_follow.toggled.connect(self._live_controls_changed)
+            clear.clicked.connect(self._clear_live_display); reset.clicked.connect(self.plot.reset_view)
             live_splitter.addWidget(center)
 
             context = QtWidgets.QWidget(); context_layout = QtWidgets.QVBoxLayout(context); context_layout.setContentsMargins(0, 0, 0, 0)
@@ -841,6 +863,9 @@ if QT_AVAILABLE:
                 QtWidgets.QMessageBox.critical(self, "Prepare failed", str(exc))
                 return False
             self._show_preflight(view)
+            self.controller.reset_live_state()
+            self._live_signature = None
+            self._refresh_live_models()
             self._refresh_sequence_sweep()
             self._log("Preflight OK" if view.ok else "Preflight has errors")
             return view.ok
@@ -1172,19 +1197,19 @@ if QT_AVAILABLE:
                 self._log("Stop is idle: no dry-run is running.")
 
         def _drain_events(self) -> None:
+            changed = False
             try:
-                while True:
+                for _ in range(200):
                     item = self.event_queue.get_nowait()
                     if isinstance(item, Event):
-                        self.plot.handle_event(item)
-                        self._append_preview(item)
-                        self._refresh_live_models()
+                        changed = True
                         self._log(_event_to_log_line(item))
                     elif isinstance(item, tuple) and item[0] == "run_result":
                         result = item[1]
                         self._log(f"Run path: {result.run_path}")
                         self._log(f"RunCompleted {result.status}")
                         self.viewer_panel.open_run(result.run_path, backend="auto")
+                        changed = True
                         self.running = False
                         self.start_action.setEnabled(True)
                     elif isinstance(item, tuple) and item[0] == "sequence_editor_done":
@@ -1196,7 +1221,9 @@ if QT_AVAILABLE:
                         self.running = False
                         self.start_action.setEnabled(True)
             except queue.Empty:
-                return
+                pass
+            if changed:
+                self._refresh_live_models()
 
         def _handle_sequence_editor_done(self, item: tuple[Any, ...]) -> None:
             _, sequence_path, stdout, stderr, returncode = item
@@ -1215,36 +1242,41 @@ if QT_AVAILABLE:
             self._refresh_operator_parameters()
             self._log(f"Sequence editor exited: {returncode}")
 
-        def _append_preview(self, event: Event) -> None:
-            if not isinstance(event, DataPoint):
-                return
-            points = self.plot.series.points
-            x = points[-1][0] if points else ""
-            y = points[-1][1] if points else ""
-            row = self.preview_table.rowCount()
-            self.preview_table.insertRow(row)
-            for column, value in enumerate((event.point_id, event.coords, x, y)):
-                self.preview_table.setItem(row, column, QtWidgets.QTableWidgetItem(str(value)))
-            self.preview_table.scrollToBottom()
-
         def _refresh_live_models(self) -> None:
             if not hasattr(self, "live_source_table"):
                 return
-            catalog = self.controller.get_live_data_catalog()
-            specs = (*catalog.list_raw(), *catalog.list_derived())
-            self.live_source_table.setRowCount(0)
+            specs = self.controller.list_live_data_specs()
+            selection = self.controller.get_live_selection()
+            signature = tuple((spec.key, spec.source_kind, spec.data_kind, spec.unit, spec.dims, spec.saved, spec.status, spec.error)
+                              for spec in specs)
             dims: list[str] = []
+            if signature != self._live_signature:
+                self.live_source_table.blockSignals(True); self.live_source_table.setRowCount(0)
+                for spec in specs:
+                    row = self.live_source_table.rowCount(); self.live_source_table.insertRow(row)
+                    show = QtWidgets.QTableWidgetItem(); show.setFlags(show.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
+                    show.setCheckState(QtCore.Qt.CheckState.Checked if spec.key in selection.keys else QtCore.Qt.CheckState.Unchecked)
+                    show.setData(_user_role(), (spec.source_kind, spec.key)); self.live_source_table.setItem(row, 0, show)
+                    values = (spec.key, spec.source_kind, spec.data_kind, spec.unit or "-", spec.status,
+                              "saved" if spec.saved else "live-only")
+                    for column, value in enumerate(values, start=1):
+                        item = QtWidgets.QTableWidgetItem(str(value)); item.setToolTip(spec.error or ""); self.live_source_table.setItem(row, column, item)
+                self.live_source_table.blockSignals(False); self._live_signature = signature; self._apply_live_filter()
             for spec in specs:
-                row = self.live_source_table.rowCount(); self.live_source_table.insertRow(row)
-                storage = "saved" if spec.saved else "live-only"
-                for column, value in enumerate((spec.key, spec.source_kind, f"{spec.data_kind} / {spec.status}", storage)):
-                    self.live_source_table.setItem(row, column, QtWidgets.QTableWidgetItem(str(value)))
                 for dim in spec.dims:
-                    if dim not in {"time_s", "channel"} and dim not in dims: dims.append(dim)
+                    if dim not in {"time_s", "sample_index", "channel"} and dim not in dims: dims.append(dim)
             for combo in (self.live_x_dim, self.live_y_dim):
                 current = combo.currentText(); combo.blockSignals(True); combo.clear(); combo.addItems(dims)
                 if current in dims: combo.setCurrentText(current)
+                elif combo is self.live_y_dim and len(dims) > 1: combo.setCurrentIndex(1)
                 combo.blockSignals(False)
+            points = self.controller.list_live_points(); point_ids = [str(point["point_id"]) for point in points]
+            current_point = self.live_point.currentText(); self.live_point.blockSignals(True); self.live_point.clear(); self.live_point.addItems(point_ids)
+            target = point_ids[-1] if self.live_auto_follow.isChecked() and point_ids else current_point
+            if target in point_ids: self.live_point.setCurrentText(target)
+            self.live_point.blockSignals(False)
+            self._refresh_live_selectors(specs, points)
+            self._fill_live_table(points)
             statuses = self.controller.get_analysis_statuses(); self.analysis_status_table.setRowCount(0)
             for status in statuses:
                 row = self.analysis_status_table.rowCount(); self.analysis_status_table.insertRow(row)
@@ -1258,6 +1290,97 @@ if QT_AVAILABLE:
                 f"entry: {sequence.entry_id or '-'}", f"coords: {sequence.resolved_coordinates or {}}",
                 f"sequence sha256: {(sequence.sequence_sha256 or '-')[:16]}", f"status: {sequence.status}",
             ]))
+            if not self.live_pause.isChecked(): self._render_live_plot()
+
+        def _selected_live_keys(self) -> tuple[str, ...]:
+            return tuple(self.live_source_table.item(row, 1).text() for row in range(self.live_source_table.rowCount())
+                         if self.live_source_table.item(row, 0).checkState() == QtCore.Qt.CheckState.Checked)
+
+        def _live_source_changed(self, item: Any) -> None:
+            if item.column() != 0: return
+            self._live_controls_changed()
+
+        def _live_controls_changed(self, *args: Any) -> None:
+            if not hasattr(self, "live_pause"): return
+            self._refresh_live_selectors(self.controller.list_live_data_specs(), self.controller.list_live_points())
+            if not self.live_pause.isChecked(): self._render_live_plot()
+            else:
+                try: self.controller.set_live_selection(self._selected_live_keys(), **self._live_selection_kwargs())
+                except Exception as exc: self.live_plot_status.setText(str(exc))
+
+        def _live_selection_kwargs(self) -> dict[str, Any]:
+            return {
+                "plot_type": self.live_plot_type.currentText().lower(),
+                "x_dim": self.live_x_dim.currentText() or None,
+                "y_dim": self.live_y_dim.currentText() or None,
+                "selectors": {dim: widget.currentData() for dim, widget in self.live_selector_widgets.items()
+                              if widget.currentIndex() >= 0},
+                "point_id": self.live_point.currentText() or None,
+                "channel": self.live_channel.currentData() if self.live_channel.currentIndex() >= 0 else None,
+            }
+
+        def _render_live_plot(self) -> None:
+            keys = self._selected_live_keys()
+            if not keys:
+                self.controller.set_live_selection((), plot_type="auto"); self.plot.set_message("No live data selected")
+                self.live_plot_status.setText("No live data selected"); return
+            options = self._live_selection_kwargs(); point = options["point_id"]
+            try:
+                selected = self.controller.set_live_selection(keys, **options)
+                data = self.controller.get_live_plot_data(selected)
+                if selected.plot_type == "line":
+                    series = [LineSeriesView(item.key, item.x, item.y) for item in data]
+                    if not any(len(item.x) for item in data): raise ValueError("Waiting for selected scalar data")
+                    self.plot.set_lines(" / ".join(keys), series)
+                elif selected.plot_type == "heatmap":
+                    if not data.values.size: raise ValueError("Waiting for heatmap points")
+                    self.plot.set_heatmap(data.key, data.x, data.y, data.values)
+                elif selected.plot_type == "trace":
+                    self.plot.set_line(f"{data.key} @ {point}", data.time, data.values)
+                else:
+                    self.plot.set_message("Table diagnostic view")
+                self.live_plot_status.setText(f"{selected.plot_type} · {len(self.controller.list_live_points())} buffered points · {self.plot.backend_name}")
+            except Exception as exc:
+                self.plot.set_message(str(exc)); self.live_plot_status.setText(str(exc))
+
+        def _refresh_live_selectors(self, specs: tuple[Any, ...], points: tuple[dict[str, Any], ...]) -> None:
+            keys = self._selected_live_keys(); selected = next((spec for spec in specs if spec.key in keys), None)
+            displayed = {self.live_x_dim.currentText(), "sample_index", "time_s", "channel"}
+            if self.live_plot_type.currentText().lower() in {"heatmap", "auto"}: displayed.add(self.live_y_dim.currentText())
+            wanted = [dim for dim in (selected.dims if selected else ()) if dim not in displayed]
+            if set(wanted) != set(self.live_selector_widgets):
+                while self.live_selector_form.rowCount(): self.live_selector_form.removeRow(0)
+                self.live_selector_widgets = {}
+                for dim in wanted:
+                    combo = QtWidgets.QComboBox()
+                    for value in dict.fromkeys(point["coords"].get(dim) for point in points if dim in point["coords"]): combo.addItem(str(value), value)
+                    combo.currentTextChanged.connect(self._live_controls_changed); self.live_selector_widgets[dim] = combo; self.live_selector_form.addRow(dim, combo)
+            channels = []
+            if selected and selected.data_kind == "matrix":
+                for point in reversed(points):
+                    if selected.key in point["data"]:
+                        channels = list(range(len(point["data"][selected.key]))); break
+            current = self.live_channel.currentData(); self.live_channel.blockSignals(True); self.live_channel.clear()
+            for value in channels: self.live_channel.addItem(str(value), value)
+            if current in channels: self.live_channel.setCurrentIndex(channels.index(current))
+            self.live_channel.blockSignals(False)
+
+        def _fill_live_table(self, points: tuple[dict[str, Any], ...]) -> None:
+            self.preview_table.setRowCount(0)
+            for point in points[-200:]:
+                row = self.preview_table.rowCount(); self.preview_table.insertRow(row)
+                summary = {key: _value_summary(value) for key, value in point["data"].items()}
+                for column, value in enumerate((point["point_id"], point["coords"], summary)):
+                    self.preview_table.setItem(row, column, QtWidgets.QTableWidgetItem(str(value)))
+
+        def _apply_live_filter(self, *args: Any) -> None:
+            needle = self.live_source_filter.text().strip().lower()
+            for row in range(self.live_source_table.rowCount()):
+                text = " ".join(self.live_source_table.item(row, column).text() for column in range(1, 7))
+                self.live_source_table.setRowHidden(row, needle not in text.lower())
+
+        def _clear_live_display(self) -> None:
+            self.controller.clear_live_display(); self.preview_table.setRowCount(0); self.plot.clear(); self.live_plot_status.setText("Display cleared; run ingestion and storage continue")
 
         def _log(self, line: str) -> None:
             self.log.appendPlainText(line)
@@ -1298,6 +1421,17 @@ def _arg_type(value: Any) -> str:
     if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
         return "ref"
     return "string"
+
+
+def _value_summary(value: Any) -> str:
+    try:
+        import numpy as np
+        array = np.asarray(value)
+        if array.ndim: return f"{array.dtype} {tuple(array.shape)}"
+    except Exception:
+        pass
+    text = repr(value)
+    return text if len(text) <= 80 else text[:77] + "..."
 
 
 def _user_role() -> Any:

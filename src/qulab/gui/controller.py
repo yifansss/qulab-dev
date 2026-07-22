@@ -67,6 +67,8 @@ class OperatorController:
         self.live_plot_model = LivePlotModel(self.live_catalog, self.live_buffer)
         self.analysis_status_model = AnalysisStatusModel()
         self.sequence_context_model = SequenceContextModel()
+        self._live_selected_keys: tuple[str, ...] | None = None
+        self._live_selection_options: dict[str, Any] = {"plot_type": "auto"}
 
     @property
     def current_config(self) -> dict[str, Any]:
@@ -276,6 +278,10 @@ class OperatorController:
             self.live_buffer = LivePointBuffer(max_points=max_points)
             self.live_plot_model = LivePlotModel(self.live_catalog, self.live_buffer)
             self.live_plot_model.initialize_defaults()
+            if self._live_selected_keys is not None:
+                available = {spec.key for spec in self.live_catalog.specs()}
+                self.live_plot_model.select(tuple(key for key in self._live_selected_keys if key in available),
+                                            **self._live_selection_options)
             self.analysis_status_model = AnalysisStatusModel(getattr(parsed, "analysis_plan", None) if parsed else None)
             self.sequence_context_model = SequenceContextModel(_single_sequence_snapshot(parsed.config if parsed else None))
 
@@ -288,7 +294,37 @@ class OperatorController:
             self.live_plot_model.initialize_defaults()
 
     def get_live_data_catalog(self) -> LiveDataCatalog:
-        return self.live_catalog
+        with self._live_lock:
+            return self.live_catalog.snapshot()
+
+    def list_live_data_specs(self):
+        with self._live_lock:
+            return self.live_catalog.specs()
+
+    def list_live_points(self):
+        with self._live_lock:
+            return self.live_buffer.points()
+
+    def get_live_selection(self) -> LivePlotSelection:
+        with self._live_lock:
+            return deepcopy(self.live_plot_model.selection)
+
+    def set_live_selection(self, keys: tuple[str, ...], *, plot_type: str = "auto",
+                           x_dim: str | None = None, y_dim: str | None = None,
+                           selectors: dict[str, Any] | None = None, point_id: str | None = None,
+                           channel: Any | None = None) -> LivePlotSelection:
+        options = {"plot_type": plot_type, "x_dim": x_dim, "y_dim": y_dim,
+                   "selectors": selectors, "point_id": point_id, "channel": channel}
+        with self._live_lock:
+            selected = self.live_plot_model.select(keys, **options)
+            self._live_selected_keys = tuple(keys)
+            self._live_selection_options = options
+            return deepcopy(selected)
+
+    def clear_live_display(self) -> None:
+        """Clear bounded GUI history without changing the run store or ingestion."""
+        with self._live_lock:
+            self.live_buffer.clear()
 
     def get_live_plot_data(self, selection: LivePlotSelection | None = None):
         with self._live_lock:

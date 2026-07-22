@@ -1,0 +1,48 @@
+schema_version: 1
+name: live_view_showcase
+description: Deterministic hardware-free scalar, heatmap, trace, matrix, derived, and waiting Live View demo.
+tags: [dry_run, live_view, showcase]
+
+resources:
+  mw: {adapter: mock_microwave, capabilities: [microwave_source], connect_on_load: true}
+  daq: {adapter: mock_daq, capabilities: [daq_counter, analog_input], connect_on_load: true}
+
+procedure:
+  - scan:
+      name: frequency_hz
+      values: [2860000000.0, 2870000000.0, 2880000000.0]
+      body:
+        - scan:
+            name: power_dbm
+            values: [-12.0, -8.0]
+            body:
+              - measurement:
+                  name: showcase_point
+                  body:
+                    - call: mw.set_frequency
+                      args: {freq_hz: "${frequency_hz}"}
+                      save_as: source_value
+                    - call: mw.set_power
+                      args: {power_dbm: "${power_dbm}"}
+                      save_as: raw_power
+                    - call: daq.read_counts_binned
+                      args: {bins: 8}
+                      save_as: raw_trace
+                    - call: daq.read_analog
+                      save_as: raw_matrix
+                    - call: mw.set_power
+                      enabled: false
+                      args: {power_dbm: -99}
+                      save_as: never_emitted
+
+analysis:
+  live: {enabled: true, execution: sync}
+  modules:
+    - {name: saved_scale, module: analysis_modules.examples.live_view_showcase, class: SavedScale,
+       inputs: [source_value], outputs: [saved_scale], show: true, save: true, args: {factor: 2}}
+    - {name: live_only_scale, module: analysis_modules.examples.live_view_showcase, class: LiveOnlyScale,
+       inputs: [source_value], outputs: [live_only_scale], show: false, save: false, args: {factor: 0.5}}
+    - {name: waiting_scale, module: analysis_modules.examples.live_view_showcase, class: WaitingScale,
+       enabled: false, inputs: [never_emitted], outputs: [waiting_preview], show: false, save: false, args: {factor: 1}}
+
+storage: {}
