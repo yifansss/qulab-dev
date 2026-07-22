@@ -1,5 +1,10 @@
 # Config Schema
 
+Load is transactional: YAML decoding, duplicate-key/source mapping, workflow
+structure, references/action arguments, and offline preflight run before a
+candidate replaces the active experiment. See
+`docs/P11_AUTHORING_DIAGNOSTICS_HISTORY.md` for the diagnostic contract.
+
 实验 config 使用 YAML。目标是人能读、GUI 能生成、AI 能编辑、CLI 能执行。
 
 ## 1. 顶层字段

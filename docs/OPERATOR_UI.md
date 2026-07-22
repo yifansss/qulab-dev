@@ -1,5 +1,9 @@
 # Operator UI
 
+> P11 transactional loading, historical read-only replay, schema-driven
+> workflow composition, and guided sequence authoring are documented in
+> `docs/P11_AUTHORING_DIAGNOSTICS_HISTORY.md`.
+
 本文档描述实际实验设置完成后，操作者每天使用的界面。这个界面是 MVP 的一部分，不是后期附加品。
 
 ## 1. 设计目标
