@@ -93,7 +93,7 @@ configs/experiments/dry_run_odmr.yaml
 项目根目录：
 
 ```text
-/Users/matt/Library/CloudStorage/SynologyDrive-Workspace/00_Workspace/30_Projects/Dev/qulab
+<QULAB_PROJECT_ROOT>
 ```
 
 建议新增或更新：

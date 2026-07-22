@@ -1,12 +1,16 @@
 import json
+from pathlib import Path
 
 from qulab.config.runner import run_dry_config
+
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_generated_rabi_dry_run_and_provenance(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     result = run_dry_config(
-        "/Users/matt/Library/CloudStorage/SynologyDrive-Workspace/00_Workspace/30_Projects/Dev/qulab/configs/experiments/dry_run_rabi_sequence_plan.yaml",
+        ROOT / "configs" / "experiments" / "dry_run_rabi_sequence_plan.yaml",
         tmp_path / "runs",
     )
     assert result.executor_state == "completed"

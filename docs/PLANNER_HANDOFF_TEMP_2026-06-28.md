@@ -7,7 +7,7 @@ This temporary document is for the next planner/agent. It summarizes the user's 
 The project is `qulab`, located at:
 
 ```text
-/Users/matt/Library/CloudStorage/SynologyDrive-Workspace/00_Workspace/30_Projects/Dev/qulab
+<QULAB_PROJECT_ROOT>
 ```
 
 The user is building a lightweight but powerful experiment orchestration framework for NV center / solid-state spin / quantum sensing experiments.

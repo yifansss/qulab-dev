@@ -93,7 +93,7 @@ tests/integration/
 项目根目录：
 
 ```text
-/Users/matt/Library/CloudStorage/SynologyDrive-Workspace/00_Workspace/30_Projects/Dev/qulab
+<QULAB_PROJECT_ROOT>
 ```
 
 新增代码建议放在：

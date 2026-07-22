@@ -58,7 +58,7 @@ worker 开始任何代码修改前，必须阅读以下文件：
 项目根目录：
 
 ```text
-/Users/matt/Library/CloudStorage/SynologyDrive-Workspace/00_Workspace/30_Projects/Dev/qulab
+<QULAB_PROJECT_ROOT>
 ```
 
 核心代码应放在：

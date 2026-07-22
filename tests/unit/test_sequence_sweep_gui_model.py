@@ -1,4 +1,5 @@
 from copy import deepcopy
+from pathlib import Path
 
 from qulab.config import load_experiment_config
 from qulab.gui.controller import OperatorController
@@ -6,6 +7,7 @@ from qulab.gui.sequence_sweep_model import SequenceSweepEditorModel
 
 
 CONFIG = "configs/experiments/dry_run_generic_asg_template_sweep.yaml"
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_model_update_duplicate_delete_and_mode_cleanup():
@@ -24,9 +26,7 @@ def test_model_update_duplicate_delete_and_mode_cleanup():
 def test_controller_preview_prepare_and_mutation_invalidation(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     controller = OperatorController(tmp_path / "runs")
-    controller.load_config(
-        "/Users/matt/Library/CloudStorage/SynologyDrive-Workspace/00_Workspace/30_Projects/Dev/qulab/" + CONFIG
-    )
+    controller.load_config(ROOT / CONFIG)
     estimate = controller.estimate_sequence_plan("generic_rabi")
     assert estimate.point_count == 4
     preview = controller.preview_sequence_plan("generic_rabi", dict(estimate.last))
