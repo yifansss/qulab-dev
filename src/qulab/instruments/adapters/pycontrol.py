@@ -476,6 +476,7 @@ class PycontrolNIAdapter(_PycontrolAdapterBase):
         sample_clock: str | None = None,
         edge: str = "rising",
         terminal_config: str = "DIFF",
+        trigger_count: int = 1,
     ) -> dict[str, Any]:
         self._ensure_connected()
         method = getattr(self._driver, "configure_ai_external_trigger", None)
@@ -489,6 +490,7 @@ class PycontrolNIAdapter(_PycontrolAdapterBase):
             sample_clock=sample_clock,
             edge=edge,
             terminal_config=terminal_config,
+            trigger_count=trigger_count,
         )
         return dict(self.ai_config)
 
@@ -558,6 +560,22 @@ class PycontrolNIAdapter(_PycontrolAdapterBase):
         data = self._driver.read_analog(channels, sample_rate, samples)
         self.armed = False
         return [item.tolist() if hasattr(item, "tolist") else item for item in data]
+
+    def read_analog_traces(self, timeout: float | None = None) -> Any:
+        """Read one finite AI record for each configured start trigger."""
+        self._ensure_connected()
+        if not self._uses_sync_driver():
+            self._unsupported_sync("read_analog_traces")
+        method = getattr(self._driver, "read_analog_trace", None)
+        if not callable(method):
+            self._unsupported_sync("read_analog_traces")
+        result = method(timeout=timeout)
+        self.armed = False
+        if isinstance(result, dict):
+            data = result.get("data")
+            if isinstance(data, dict) and "analog_traces" in data:
+                return data["analog_traces"]
+        raise RuntimeError("NI sync driver did not return analog_traces")
 
     def read(self, timeout: float | None = None) -> Any:
         self._ensure_connected()

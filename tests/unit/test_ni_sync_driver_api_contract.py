@@ -56,6 +56,7 @@ class _Timing:
 class _StartTrigger:
     def __init__(self):
         self.config = None
+        self.retriggerable = False
 
     def cfg_dig_edge_start_trig(self, **kwargs):
         self.config = kwargs
@@ -207,6 +208,36 @@ def test_ai_external_trigger_preserves_channel_metadata(monkeypatch) -> None:
         assert result["kind"] == "analog_trace"
         assert result["data"]["analog_channels"] == ["ai0", "ai1"]
         assert result["data"]["analog_trace"] == [[0.0, 1.0, 2.0], [0.0, 1.0, 2.0]]
+        assert result["data"]["analog_traces"] == [[[0.0, 1.0, 2.0], [0.0, 1.0, 2.0]]]
+    finally:
+        _cleanup_pycontrol_imports()
+
+
+def test_ai_retriggerable_returns_one_record_per_trigger(monkeypatch) -> None:
+    try:
+        driver_cls = _load_driver(monkeypatch)
+        driver = driver_cls(verbose=False)
+        driver.connect("Dev2")
+
+        config = driver.configure_ai_external_trigger(
+            channels=["ai2"],
+            sample_rate=1_000_000,
+            samples=3,
+            start_trigger="PFI1",
+            trigger_count=2,
+        )
+        task = driver._tasks["ai"]
+        result = driver.read()
+
+        assert config["trigger_count"] == 2
+        assert config["retriggerable"] is True
+        assert task.triggers.start_trigger.retriggerable is True
+        assert result["kind"] == "analog_traces"
+        assert result["data"]["analog_traces"] == [
+            [[0.0, 1.0, 2.0]],
+            [[3.0, 4.0, 5.0]],
+        ]
+        assert result["data"]["time_axis_s"] == [0.0, 1e-06, 2e-06]
     finally:
         _cleanup_pycontrol_imports()
 

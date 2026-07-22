@@ -1,0 +1,158 @@
+schema_version: 1
+name: rabi_pse_ai2_channel1_pfi1
+description: >
+  Hardware Rabi experiment with an externally configured microwave source.
+  ASG Channel 1 is the variable-width microwave gate. In the same sequence,
+  ASG Channel 2 sends two start triggers to NI Dev2/PFI1. NI acquires one
+  independent Dev2/ai2 trace after each trigger. The two trace means and their
+  signal/reference ratio are shown live and saved with both raw traces.
+tags: [hardware, rabi, pse, ai2, asg_master, external_microwave]
+
+safety:
+  requires_allow_output: true
+  physically_verified: false
+  checklist:
+    - Configure microwave frequency and low power outside Qulab.
+    - Verify ASG Channel 1 and both Channel 2 trigger edges on an oscilloscope first.
+    - Connect ASG Channel 2 to NI Dev2/PFI1 only after the scope check.
+    - Connect PSE analog output to NI Dev2/ai2 and confirm the allowed voltage range.
+    - Confirm the NI device supports retriggerable finite analog input.
+
+bench:
+  wiring:
+    - ASG Channel 1 -> external microwave source trigger or gate input.
+    - ASG Channel 2 -> NI Dev2/PFI1 AI start trigger.
+    - PSE analog output -> NI Dev2/ai2 differential input.
+    - Oscilloscope CH1 -> ASG Channel 1; CH2 -> ASG Channel 2; CH3 -> PSE output.
+  expected_observation:
+    - Channel 1 pulse width changes with tau_s while its leading edge remains fixed.
+    - Channel 2 emits two rising edges separated by more than one AI record duration.
+    - Each PFI1 edge starts one 1 ms AI2 record; no external sample clock is used.
+    - One sequence returns exactly two raw records and one signal/reference ratio.
+
+resources:
+  asg:
+    adapter: pycontrol_asg
+    capabilities: [pulse_sequencer, trigger_source]
+    address: auto
+    simulation: false
+    pycontrol_path: drivers/pycontrol
+    voltage_level: 0
+    impedance: 0
+  daq:
+    adapter: pycontrol_ni
+    capabilities: [analog_input, trigger_receiver]
+    driver: sync
+    device: Dev2
+    simulation: false
+    pycontrol_path: drivers/pycontrol
+
+sequence_plans:
+  rabi_channel1:
+    resource: asg
+    family: {provider: qulab.sequence_generation.providers.asg_template, version: "1"}
+    template: configs/sequences/rabi_two_trace_channel2_trigger.json
+    targets:
+      mw_gate: {channel: Channel 1, pulse: 0}
+      signal_trigger: {channel: Channel 2, pulse: 0}
+      reference_trigger: {channel: Channel 2, pulse: 1}
+    parameters:
+      tau_s:
+        mode: linspace
+        start: 20.0e-9
+        stop: 1000.0e-9
+        points: 21
+        unit: s
+        transform:
+          target: mw_gate
+          property: duration
+          propagation: {mode: none}
+    constraints:
+      - {type: anchor, target: signal_trigger.start, reference: mw_gate.end, offset_s: 1.9e-6}
+      - {type: anchor, target: reference_trigger.start, reference: signal_trigger.end, offset_s: 1.1e-3}
+    sampling: {mode: cartesian, order: [tau_s]}
+    materialize: {cache: true, max_points: 501}
+    options:
+      trigger_channels: [ch2]
+      readout_window_s: 1.0e-3
+      channel_roles_confirmed: true
+      channel_roles: {mw_gate_channel: Channel 1, daq_trigger_channel: Channel 2}
+
+sync:
+  master: asg
+  triggers:
+    - {source: asg.ch2, target: daq.PFI1, edge: rising, purpose: ai_retriggerable_start}
+  order:
+    configure: [daq, asg]
+    arm: [daq, asg]
+    start: [asg]
+    read: [daq]
+
+procedure:
+  - sequence_sweep:
+      plan: rabi_channel1
+      body:
+        - measurement:
+            name: rabi_tau_point
+            body:
+              - call: asg.compile_sequence
+              - call: daq.configure_ai_external_trigger
+                args:
+                  channels: [ai2]
+                  sample_rate: 1000000
+                  samples: 1000
+                  start_trigger: PFI1
+                  sample_clock: null
+                  edge: rising
+                  terminal_config: DIFF
+                  trigger_count: 2
+              - run:
+                  name: asg_triggered_ai2
+                  timeout_s: 5
+                  steps:
+                    - call: daq.arm
+                    - call: asg.arm
+                    - call: asg.start
+                    - call: daq.read_analog_traces
+                      args: {timeout: 5.0}
+                      save_as: fluorescence_traces
+
+analysis:
+  live: {enabled: true, execution: sync, fail_policy: fail, save_outputs: true}
+  modules:
+    - name: two_trace_ratio
+      module: analysis_modules.two_trace_ratio
+      class: TwoTraceMeanRatio
+      inputs: [fluorescence_traces]
+      outputs: [fluorescence_signal_mean, fluorescence_reference_mean, fluorescence_ratio]
+      show: true
+      save: true
+      fail_policy: fail
+      args:
+        channel_index: 0
+        signal_record: 0
+        reference_record: 1
+        sample_start: 0
+        sample_stop: 1000
+        denominator_epsilon: 1.0e-12
+
+operator_parameters:
+  - {name: ai_channel, label: PSE AI channel, source: "procedure.call[daq.configure_ai_external_trigger].args.channels"}
+  - {name: ai_sample_rate, label: AI sample rate, unit: Hz, source: "procedure.call[daq.configure_ai_external_trigger].args.sample_rate", widget: number, min: 1}
+  - {name: ai_samples, label: AI samples per trigger, source: "procedure.call[daq.configure_ai_external_trigger].args.samples", widget: integer, min: 1}
+  - {name: ai_start_trigger, label: AI start trigger, source: "procedure.call[daq.configure_ai_external_trigger].args.start_trigger"}
+  - {name: ai_trigger_count, label: Traces per sequence, source: "procedure.call[daq.configure_ai_external_trigger].args.trigger_count", widget: integer, min: 1}
+  - {name: ai_read_timeout, label: AI read timeout, unit: s, source: "procedure.call[daq.read_analog_traces].args.timeout", widget: number, min: 0.1}
+
+plot:
+  - {type: line, x: tau_s, y: fluorescence_ratio}
+  - {type: line, x: tau_s, y: fluorescence_signal_mean}
+  - {type: line, x: tau_s, y: fluorescence_reference_mean}
+  - {type: trace, x: time_s, y: fluorescence_traces}
+
+cleanup:
+  - call: asg.stop
+  - call: daq.stop
+
+storage:
+  backends: [csv]

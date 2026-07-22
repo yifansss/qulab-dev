@@ -1,0 +1,21 @@
+[
+  {
+    "channel_name": "Channel 1",
+    "delay_off": 0.0,
+    "pbn": 0,
+    "vendor_note": "variable microwave gate",
+    "pulses": [
+      {"pbn": 0, "rise": 1, "time_on": 0.1, "d": 1200.0, "start_time": 3.0, "type": "notype", "phas": 0.0}
+    ]
+  },
+  {
+    "channel_name": "Channel 2",
+    "delay_off": 0.0,
+    "pbn": 1,
+    "vendor_note": "two NI PFI1 start triggers",
+    "pulses": [
+      {"pbn": 1, "rise": 1, "time_on": 0.2, "d": 1200.0, "start_time": 5.0, "type": "notype", "phas": 0.0},
+      {"pbn": 1, "rise": 1, "time_on": 0.2, "d": 1200.0, "start_time": 1105.2, "type": "notype", "phas": 0.0}
+    ]
+  }
+]
