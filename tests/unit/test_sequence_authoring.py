@@ -72,3 +72,43 @@ def test_editor_saved_artifact_is_reinspected_and_invalidates_prepare(tmp_path: 
     model.accept_editor_result(plan_id, {"path": str(artifact), "sha256": digest})
     assert model.sweep.states[plan_id] == "stale"
     assert config["sequence_plans"][plan_id]["template"] == str(artifact)
+
+
+def test_dynamic_generic_fields_roles_targets_and_normalized_preview() -> None:
+    config = load_experiment_config(ROOT / "configs/experiments/dry_run_generic_asg_template_sweep.yaml")
+    model = SequenceAuthoringModel(config); plan_id = "generic_rabi"
+    assert {item.name for item in model.parameter_fields(plan_id)} == {"tau_s", "readout_shift_s"}
+    model.update_roles(plan_id, {"daq_trigger_channel": "Channel 6"})
+    model.inspect_generic_template(plan_id)
+    model.update_target_transform(plan_id, "mw_pulse", "Channel 1", 0, parameter="tau_s",
+                                  property_name="duration", propagation="shift_after", scope="all_channels")
+    raw = config["sequence_plans"][plan_id]
+    assert raw["options"]["channel_roles_confirmed"] is True
+    assert raw["parameters"]["tau_s"]["transform"]["propagation"]["mode"] == "shift_after"
+    first, current, last = model.normalized_previews(plan_id, 1)
+    assert first.pulses and current.pulses and last.pulses
+    assert first.channels and first.duration_s > 0
+
+
+def test_invalid_parameter_edit_is_transactional_and_non_sweepable_fails() -> None:
+    config = load_experiment_config(ROOT / "configs/experiments/dry_run_rabi_sequence_family.yaml")
+    model = SequenceAuthoringModel(config); plan_id = "rabi"
+    before = model.revision(plan_id)
+    try: model.update_parameter(plan_id, "tau_s", {"mode": "explicit", "values": []})
+    except Exception: pass
+    else: raise AssertionError("empty sweep was accepted")
+    assert model.revision(plan_id) == before
+    try: model.update_parameter(plan_id, "sequence_period_s", {"mode": "linspace", "start": 1e-6, "stop": 2e-6, "points": 2})
+    except ValueError as exc: assert "not sweepable" in str(exc)
+    else: raise AssertionError("non-sweepable parameter was swept")
+
+
+def test_trigger_acquisition_and_issue_step_mapping() -> None:
+    config = load_experiment_config(ROOT / "configs/experiments/dry_run_generic_asg_template_sweep.yaml")
+    config["sequence_plans"]["generic_rabi"]["options"]["trigger_channels"] = ["Channel 5"]
+    config["setup"] = [{"call": "daq.configure_counter", "args": {"sample_rate": 1e6, "samples": 10}}]
+    config["sequence_plans"]["generic_rabi"]["options"]["readout_window_s"] = 1e-6
+    issues = SequenceAuthoringModel(config).located_issues("generic_rabi")
+    by_code = {item.code: item for item in issues}
+    assert by_code["sequence_trigger_channel_mismatch"].step == "channel_roles"
+    assert by_code["sequence_acquisition_window_mismatch"].step == "channel_roles"
