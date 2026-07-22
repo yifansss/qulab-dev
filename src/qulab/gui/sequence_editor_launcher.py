@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
+import hashlib
+from contextlib import redirect_stdout
 from pathlib import Path
 
 
@@ -16,14 +18,24 @@ def main(argv: list[str] | None = None) -> int:
     editor_path = Path(args[0]).expanduser().resolve()
     sequence_path = Path(args[1]).expanduser().resolve() if len(args) > 1 and args[1] else None
 
-    module = _load_editor_module(editor_path)
-    app = module.QApplication.instance() or module.QApplication(sys.argv)
-    dialog = module.EditSequenceDialog()
-    if sequence_path is not None:
-        _load_sequence_into_dialog(module, dialog, sequence_path)
-    result = dialog.exec_()
-    if result == module.QDialog.Accepted:
-        print(json.dumps(dialog.get_params(), indent=2, ensure_ascii=False), flush=True)
+    with redirect_stdout(sys.stderr):
+        module = _load_editor_module(editor_path)
+        app = module.QApplication.instance() or module.QApplication(sys.argv)
+        dialog = module.EditSequenceDialog()
+        if sequence_path is not None:
+            _load_sequence_into_dialog(module, dialog, sequence_path)
+        result = dialog.exec_()
+        params = dialog.get_params() if result == module.QDialog.Accepted else []
+    saved = None
+    active = Path(str(getattr(dialog, "active_file", "")))
+    if result == module.QDialog.Accepted and active.is_file():
+        saved = {"path": str(active), "sha256": hashlib.sha256(active.read_bytes()).hexdigest()}
+    pulse_count = sum(len(ch.get("pulses", [])) for ch in params if isinstance(ch, dict))
+    payload = {"protocol_version": 1, "editor_version": "1", "capabilities": ["open", "edit_channels", "edit_pulses", "validate", "preview", "save"],
+               "source": None if sequence_path is None else str(sequence_path), "dirty": result != module.QDialog.Accepted,
+               "validation": [], "summary": {"channels": [ch.get("channel_name") for ch in params if isinstance(ch, dict)], "pulse_count": pulse_count, "duration_s": None},
+               "saved_artifact": saved}
+    print(json.dumps(payload, sort_keys=True, separators=(",", ":")), flush=True)
     app.processEvents()
     return 0
 

@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -35,6 +36,69 @@ class SequenceEditorLaunchResult:
     message: str
     pid: int | None = None
     process: Any = field(default=None, repr=False, compare=False)
+
+
+@dataclass(frozen=True)
+class SequenceEditorProtocolResult:
+    ok: bool
+    protocol_version: int | None
+    editor_version: str | None
+    capabilities: tuple[str, ...]
+    source: str | None
+    dirty: bool
+    validation: tuple[dict[str, Any], ...]
+    summary: dict[str, Any]
+    saved_artifact: dict[str, Any] | None
+    message: str = ""
+
+
+def parse_editor_protocol(stdout: str, stderr: str = "", *, expected_version: int = 1) -> SequenceEditorProtocolResult:
+    """Parse the launcher's single JSON protocol object; logs belong on stderr."""
+    try:
+        payload = json.loads(stdout.strip())
+    except Exception as exc:
+        return SequenceEditorProtocolResult(False, None, None, (), None, False, (), {}, None,
+                                            f"Sequence editor returned invalid JSON protocol: {exc}")
+    if not isinstance(payload, dict):
+        return SequenceEditorProtocolResult(False, None, None, (), None, False, (), {}, None,
+                                            "Sequence editor protocol root must be an object.")
+    version = payload.get("protocol_version")
+    if version != expected_version:
+        return SequenceEditorProtocolResult(False, version if isinstance(version, int) else None,
+                                            str(payload.get("editor_version") or ""), (), None, False, (), {}, None,
+                                            f"Sequence editor protocol version {version!r} is incompatible with {expected_version}.")
+    capabilities = payload.get("capabilities", [])
+    validation = payload.get("validation", [])
+    summary = payload.get("summary", {})
+    if not isinstance(capabilities, list) or not isinstance(validation, list) or not isinstance(summary, dict):
+        return SequenceEditorProtocolResult(False, version, str(payload.get("editor_version") or ""), (), None,
+                                            False, (), {}, None, "Sequence editor protocol fields have invalid types.")
+    return SequenceEditorProtocolResult(True, version, str(payload.get("editor_version") or ""),
+                                        tuple(map(str, capabilities)), payload.get("source"), bool(payload.get("dirty", False)),
+                                        tuple(item for item in validation if isinstance(item, dict)), dict(summary),
+                                        payload.get("saved_artifact") if isinstance(payload.get("saved_artifact"), dict) else None,
+                                        stderr.strip())
+
+
+def run_sequence_editor_protocol(editor_path: str | Path, sequence_path: str | Path | None = None, *,
+                                 timeout_s: float = 300.0, python_executable: str | Path | None = None,
+                                 run_factory: Callable[..., Any] = subprocess.run) -> SequenceEditorProtocolResult:
+    editor = resolve_project_path(editor_path) or Path(editor_path)
+    if not editor.is_file():
+        return SequenceEditorProtocolResult(False, None, None, (), None, False, (), {}, None, f"Sequence editor not found: {editor}")
+    python = str(python_executable or os.environ.get("QULAB_SEQUENCE_EDITOR_PYTHON") or sys.executable)
+    command = [python, str(sequence_editor_launcher_path()), str(editor)]
+    if sequence_path is not None: command.append(str(resolve_project_path(sequence_path) or sequence_path))
+    try:
+        completed = run_factory(command, capture_output=True, text=True, timeout=timeout_s, check=False)
+    except subprocess.TimeoutExpired:
+        return SequenceEditorProtocolResult(False, None, None, (), None, False, (), {}, None, "Sequence editor timed out.")
+    except Exception as exc:
+        return SequenceEditorProtocolResult(False, None, None, (), None, False, (), {}, None, f"Sequence editor failed: {exc}")
+    if completed.returncode != 0:
+        return SequenceEditorProtocolResult(False, None, None, (), None, False, (), {}, None,
+                                            (completed.stderr or f"Sequence editor exited with {completed.returncode}").strip())
+    return parse_editor_protocol(completed.stdout, completed.stderr)
 
 
 @dataclass(frozen=True)

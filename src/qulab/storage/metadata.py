@@ -20,6 +20,7 @@ class MetadataWriter:
         self.path = path
         self.metadata: dict[str, Any] = {
             "schema_version": 1,
+            "event_schema_version": 1,
             "run_id": run_id,
             "experiment_name": experiment_name,
             "started_at": started_at,
@@ -37,6 +38,9 @@ class MetadataWriter:
             "error_count": 0,
             "analysis_error_count": 0,
             "analysis_modules": [],
+            "config_sha256": None,
+            "resolved_config_sha256": None,
+            "final_diagnostics": [],
         }
 
     def write(self) -> None:

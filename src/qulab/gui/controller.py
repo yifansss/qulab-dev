@@ -50,6 +50,8 @@ from .live_data_catalog import LiveDataCatalog, LivePointBuffer
 from .live_plot_model import LivePlotModel, LivePlotSelection
 from .analysis_status_model import AnalysisStatusModel
 from .sequence_context_model import SequenceContextModel
+from .workflow_composer import WorkflowComposerModel
+from .sequence_authoring import SequenceAuthoringModel
 
 
 class OperatorController:
@@ -64,6 +66,13 @@ class OperatorController:
         self.sequence_sweep_model: SequenceSweepEditorModel | None = None
         self.last_candidate_result: ConfigLoadResult | None = None
         self.historical_workspace: HistoricalRunWorkspace | None = None
+        self.historical_replay: Any | None = None
+        self.historical_live_catalog = LiveDataCatalog()
+        self.historical_live_buffer = LivePointBuffer()
+        self.historical_analysis_status = AnalysisStatusModel()
+        self.historical_sequence_context = SequenceContextModel()
+        self._workflow_composer: WorkflowComposerModel | None = None
+        self._sequence_authoring: SequenceAuthoringModel | None = None
         self._live_lock = RLock()
         self.live_catalog = LiveDataCatalog()
         self.live_buffer = LivePointBuffer()
@@ -88,6 +97,8 @@ class OperatorController:
             self.config = deepcopy(result.candidate_config)
             self.parsed = result.parsed
             self.sequence_sweep_model = SequenceSweepEditorModel.load(self.config)
+            self._workflow_composer = WorkflowComposerModel(self.config)
+            self._sequence_authoring = SequenceAuthoringModel(self.config, self.sequence_sweep_model)
             self.reset_live_state()
             result = replace(result, activated=True)
         self.last_candidate_result = result
@@ -381,7 +392,20 @@ class OperatorController:
 
         workspace = HistoricalRunWorkspace.open(run_path)
         self.historical_workspace = workspace
+        self.historical_live_catalog = LiveDataCatalog()
+        self.historical_live_buffer = LivePointBuffer()
+        self.historical_analysis_status = AnalysisStatusModel()
+        self.historical_sequence_context = SequenceContextModel()
+        self.historical_replay = workspace.replay(self.handle_historical_event)
         return workspace
+
+    def handle_historical_event(self, event: Event) -> None:
+        """Feed recorded events only into dedicated read-only presentation models."""
+
+        self.historical_live_catalog.handle_event(event)
+        self.historical_live_buffer.handle_event(event)
+        self.historical_analysis_status.handle_event(event)
+        self.historical_sequence_context.handle_event(event)
 
     def clone_historical_run(self, destination: Path | str, *, use_resolved: bool = False) -> ConfigLoadResult:
         if self.historical_workspace is None:
@@ -535,6 +559,21 @@ class OperatorController:
         self._require_config()
         assert self.config is not None
         return build_workflow_tree(self.config)
+
+    def workflow_composer(self) -> WorkflowComposerModel:
+        self._require_config()
+        assert self.config is not None
+        if self._workflow_composer is None or self._workflow_composer.config is not self.config:
+            self._workflow_composer = WorkflowComposerModel(self.config)
+        return self._workflow_composer
+
+    def sequence_authoring(self) -> SequenceAuthoringModel:
+        self._require_config()
+        assert self.config is not None
+        sweep = self._sequence_model()
+        if self._sequence_authoring is None or self._sequence_authoring.config is not self.config:
+            self._sequence_authoring = SequenceAuthoringModel(self.config, sweep)
+        return self._sequence_authoring
 
     def update_workflow_node(self, path: WorkflowPath, patch: dict[str, Any]) -> None:
         self._require_config()

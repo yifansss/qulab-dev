@@ -152,6 +152,58 @@ if QT_AVAILABLE:
             self.main_pages.addTab(self._build_live_run_page(), "Live Run / 运行")
             self.viewer_panel = self._build_run_data_panel()
             self.main_pages.addTab(self.viewer_panel, "Data Viewer / 数据查看")
+            self.main_pages.addTab(self._build_history_page(), "History / 历史")
+
+        def _build_history_page(self) -> QtWidgets.QWidget:
+            page = QtWidgets.QWidget()
+            layout = QtWidgets.QVBoxLayout(page)
+            self.history_banner = QtWidgets.QLabel("Historical / Read-only — no run selected")
+            self.history_banner.setObjectName("statusBadge")
+            layout.addWidget(self.history_banner)
+            controls = QtWidgets.QHBoxLayout()
+            open_button = QtWidgets.QPushButton("Open Run / 打开运行")
+            step_button = QtWidgets.QPushButton("Step / 单步")
+            play_button = QtWidgets.QPushButton("Replay max / 回放")
+            open_button.clicked.connect(self._open_history)
+            step_button.clicked.connect(self._step_history)
+            play_button.clicked.connect(self._play_history)
+            controls.addWidget(open_button); controls.addWidget(step_button); controls.addWidget(play_button); controls.addStretch(1)
+            layout.addLayout(controls)
+            self.history_sections = QtWidgets.QTableWidget(0, 3)
+            self.history_sections.setHorizontalHeaderLabels(["section", "fidelity", "message"])
+            self.history_sections.horizontalHeader().setStretchLastSection(True)
+            layout.addWidget(self.history_sections, 1)
+            self.history_timeline = QtWidgets.QPlainTextEdit()
+            self.history_timeline.setReadOnly(True)
+            layout.addWidget(self.history_timeline, 1)
+            return page
+
+        def _open_history(self) -> None:
+            path = QtWidgets.QFileDialog.getExistingDirectory(self, "Open Qulab run", str(PROJECT_ROOT / "runs"))
+            if not path: return
+            try: workspace = self.controller.open_historical_run(path)
+            except Exception as exc:
+                QtWidgets.QMessageBox.critical(self, "Open historical run failed", str(exc)); return
+            metadata = workspace.metadata
+            self.history_banner.setText(f"Historical / Read-only — {workspace.run_id} — {metadata.get('status', 'unknown')}")
+            self.history_sections.setRowCount(0)
+            for status in workspace.sections:
+                row = self.history_sections.rowCount(); self.history_sections.insertRow(row)
+                for column, value in enumerate((status.section, status.fidelity.value, status.message)):
+                    self.history_sections.setItem(row, column, QtWidgets.QTableWidgetItem(str(value)))
+            self.history_timeline.setPlainText("\n".join(f"{key}: {value}" for key, value in workspace.timeline_summary().items()))
+
+        def _step_history(self) -> None:
+            replay = self.controller.historical_replay
+            if replay is None: return
+            event = replay.step()
+            if event is not None: self.history_timeline.appendPlainText(f"[{replay.index - 1}] {_event_summary(event)}")
+
+        def _play_history(self) -> None:
+            replay = self.controller.historical_replay
+            if replay is None: return
+            count = replay.play("max")
+            self.history_timeline.appendPlainText(f"Replay complete: {count} event(s), index={replay.index}")
 
         def _build_control_page(self) -> QtWidgets.QWidget:
             page = QtWidgets.QWidget()

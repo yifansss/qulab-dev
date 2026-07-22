@@ -108,6 +108,12 @@ class RunStore:
         self.metadata_writer = MetadataWriter(
             self._run_path / "metadata.json", self.run_id, self.experiment_name, started_at
         )
+        if self.config is not None:
+            self.metadata_writer.metadata["config_sha256"] = _sha256(self._run_path / "config.yaml")
+            self.metadata_writer.metadata["resources"] = to_jsonable(self.config.get("resources", {}))
+            self.metadata_writer.metadata["sync"] = to_jsonable(self.config.get("sync", {}))
+        if self.resolved_config is not None:
+            self.metadata_writer.metadata["resolved_config_sha256"] = _sha256(self._run_path / "resolved_config.yaml")
         if self.analysis_plan is not None:
             self.metadata_writer.metadata["analysis_modules"] = [
                 module.to_dict() for module in self.analysis_plan.modules
