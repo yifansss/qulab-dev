@@ -166,6 +166,13 @@ operator_parameters:
 Sequence Sweep 用于把 P9 bundle runtime 变成现场可用的 sequence scan authoring。详细架构见
 `docs/SEQUENCE_FAMILY_GENERATOR_PHASE_E_PLAN.md`。
 
+当前 Operator 界面只暴露两个工作区：
+
+- `Bundle Browser`：只读浏览直接声明或 Prepare 后 materialize 的 bundle、entry coordinates、pulse table、first/last overlay 和 difference。候选校验临时目录中的 generated bundle 不显示。
+- `Generic Sweep`：解析 immutable ASG template，把 sweep 参数绑定到 pulse start/duration/end/shift，配置 linspace/range/explicit、propagation/anchor，并执行 Preview 与 Prepare。
+
+Curated provider 和 standalone editor protocol 继续作为兼容底层保留，但不再作为 Operator 的独立 authoring mode，避免显示与当前任务无关的 provider、role 和 fixed-parameter 表单。
+
 推荐布局：
 
 ```text

@@ -813,6 +813,27 @@ PYTHONPATH=src python -m qulab.scripts.hardware_check --config configs/experimen
 - LMX 接受频率/功率命令。
 - RF output 保持 off。
 
+### Step 10.5: two-trigger Rabi AI readout
+
+真实 Rabi 配置：
+
+```text
+configs/experiments/rabi_pse_ai2_channel1_pfi1.yaml
+```
+
+接线：
+
+```text
+ASG Channel 1 -> microwave gate/trigger input
+ASG Channel 2 -> NI Dev2/PFI1
+PSE analog output -> NI Dev2/ai2
+```
+
+同一 sequence 的 Channel 2 发出两个上升沿。NI 使用 retriggerable finite AI，
+每个边沿采一条独立 trace；`analysis_modules.two_trace_ratio.TwoTraceMeanRatio`
+分别求两条 trace 的样本均值并保存 `signal/reference`。上台前必须确认 NI 型号支持
+retriggerable finite AI，并在示波器上确认两次触发间隔大于单条 AI record 的采集时间。
+
 ### Step 11: low-power ODMR plan
 
 只有在以下都确认后再考虑：
