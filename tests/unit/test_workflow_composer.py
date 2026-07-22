@@ -112,3 +112,49 @@ def test_existing_sequence_macro_is_not_replaced_when_link_is_refreshed() -> Non
     model = SequenceAuthoringModel(config, sweep)
     model.insert_or_update_macro("rabi")
     assert config["procedure"][0]["sequence_sweep"]["body"] == custom_body
+
+
+def test_existing_action_and_structural_nodes_are_transactionally_editable() -> None:
+    config = _config()
+    config["procedure"] = [{"scan": {"name": "freq", "values": [1.0, 2.0], "body": [
+        {"call": "mw.set_frequency", "args": {"freq_hz": "${freq}"}}
+    ]}}]
+    model = WorkflowComposerModel(config)
+    model.update_structural(("procedure", 0), {"name": "mw_freq_hz", "values": {"start": 2.8e9, "stop": 2.9e9, "points": 11}})
+    call_path = ("procedure", 0, "scan", "body", 0)
+    assert config["procedure"][0]["scan"]["body"][0]["args"]["freq_hz"] == "${mw_freq_hz}"
+    model.update_action(call_path, {"freq_hz": "${mw_freq_hz}"}, None, enabled=False)
+    assert config["procedure"][0]["scan"]["body"][0]["enabled"] is False
+    assert model.undo()
+    assert "enabled" not in config["procedure"][0]["scan"]["body"][0]
+
+
+def test_move_duplicate_delete_and_cross_container_move_preserve_subtrees() -> None:
+    config = _config()
+    config["procedure"] = [
+        {"measurement": {"name": "point", "body": [{"wait": {"name": "settle", "duration_s": 0.1}}]}},
+        {"wait": {"name": "tail", "duration_s": 0.2}},
+    ]
+    model = WorkflowComposerModel(config)
+    assert model.move_sibling(("procedure", 1), -1) == ("procedure", 0)
+    duplicate = model.duplicate(("procedure", 1))
+    moved = model.move(duplicate, ("procedure", 1, "measurement", "body"))
+    assert moved[-1] == 1
+    assert len(config["procedure"][1]["measurement"]["body"]) == 2
+    model.delete(moved)
+    assert len(config["procedure"][1]["measurement"]["body"]) == 1
+
+
+def test_sequence_sweep_plan_edit_preserves_measurement_body() -> None:
+    config = _config(); config["sequence_plans"] = {"old": {}, "new": {}}
+    body = [{"measurement": {"name": "point", "body": [{"call": "mw.set_frequency", "args": {"freq_hz": 1.0}}]}}]
+    config["procedure"] = [{"sequence_sweep": {"plan": "old", "body": body}}]
+    WorkflowComposerModel(config).update_structural(("procedure", 0), {"plan": "new"})
+    assert config["procedure"][0]["sequence_sweep"] == {"plan": "new", "body": body}
+
+
+def test_duplicate_sequence_macro_is_rejected_by_completeness_check() -> None:
+    config = _config(); config["sequence_plans"] = {"rabi": {}}
+    macro = {"sequence_sweep": {"plan": "rabi", "body": []}}
+    config["procedure"] = [macro, macro.copy()]
+    assert "sequence_macro_duplicate" in {item.code for item in WorkflowComposerModel(config).validate_complete()}

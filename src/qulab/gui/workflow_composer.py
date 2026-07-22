@@ -60,6 +60,25 @@ class WorkflowComposerModel:
 
     def snapshot(self) -> dict[str, Any]: return deepcopy(self.config)
 
+    @property
+    def can_undo(self) -> bool: return bool(self._undo)
+
+    @property
+    def can_redo(self) -> bool: return bool(self._redo)
+
+    def step(self, path: WorkflowPath) -> dict[str, Any]:
+        value = _get(self.config, path)
+        if not isinstance(value, dict): raise TypeError("workflow path does not identify a step")
+        return deepcopy(value)
+
+    def action_spec(self, path: WorkflowPath) -> tuple[str, ActionSpec] | None:
+        step = _get(self.config, path); call = step.get("call") if isinstance(step, dict) else None
+        if not isinstance(call, str) or "." not in call: return None
+        resource, method = call.split(".", 1); raw = self.config.get("resources", {}).get(resource, {})
+        adapter = str(raw.get("adapter") or raw.get("adaptor") or "") if isinstance(raw, dict) else ""
+        spec = DEFAULT_ACTION_REGISTRY.resolve_action(adapter, method)
+        return (resource, spec) if spec is not None else None
+
     def list_palette(self, context_path: WorkflowPath = ("procedure",), search: str = "") -> tuple[PaletteAction, ...]:
         section = str(context_path[0]) if context_path else "procedure"
         query = search.lower().strip(); result: list[PaletteAction] = []
@@ -173,9 +192,66 @@ class WorkflowComposerModel:
     def delete(self, path: WorkflowPath) -> None:
         before = self.snapshot(); del _get(self.config, path[:-1])[_index(path)]; self._commit(before)
 
+    def update_action(self, path: WorkflowPath, values: dict[str, Any], save_as: str | None,
+                      *, enabled: bool = True) -> None:
+        resolved = self.action_spec(path)
+        if resolved is not None:
+            _resource, action = resolved
+            issues = validate_action_call(action, values, self.available_references(path))
+            errors = [item for item in issues if item.severity == "error"]
+            if errors: raise ValueError("; ".join(item.message for item in errors))
+        before = self.snapshot(); step = _get(self.config, path)
+        step["args"] = deepcopy(values)
+        if save_as: step["save_as"] = save_as
+        else: step.pop("save_as", None)
+        _set_enabled(step, enabled); self._commit(before)
+
+    def update_structural(self, path: WorkflowPath, fields: dict[str, Any], *, enabled: bool = True) -> None:
+        step = _get(self.config, path); kind = _step_kind(step)
+        if kind not in STRUCTURAL_KINDS: raise ValueError("selected step is not an editable workflow block")
+        before = self.snapshot(); payload = step[kind]
+        if kind == "scan":
+            name = str(fields.get("name") or "").strip()
+            if not name: raise ValueError("scan name is required")
+            old = payload.get("name"); payload["name"] = name; payload["values"] = deepcopy(fields["values"])
+            if isinstance(old, str) and old != name:
+                for ref_path in _find_value_paths(self.config, f"${{{old}}}"):
+                    _set(self.config, ref_path, f"${{{name}}}")
+        elif kind == "average":
+            count = int(fields.get("count", 1))
+            if count < 1: raise ValueError("average count must be >= 1")
+            payload["name"] = str(fields.get("name") or "average"); payload["count"] = count
+        elif kind in {"measurement", "cleanup"}:
+            payload["name"] = str(fields.get("name") or kind)
+        elif kind == "run":
+            timeout = float(fields.get("timeout_s", 10.0))
+            if timeout <= 0: raise ValueError("run timeout_s must be > 0")
+            payload["name"] = str(fields.get("name") or "run"); payload["timeout_s"] = timeout
+        elif kind == "wait":
+            duration = float(fields.get("duration_s", 0.1))
+            if duration < 0: raise ValueError("wait duration_s must be >= 0")
+            payload["name"] = str(fields.get("name") or "wait"); payload["duration_s"] = duration
+        elif kind == "sequence_sweep":
+            plan = str(fields.get("plan") or "").strip()
+            if plan not in (self.config.get("sequence_plans", {}) or {}): raise ValueError(f"unknown sequence plan: {plan}")
+            payload["plan"] = plan
+        _set_enabled(step, enabled); self._commit(before)
+
+    def move_sibling(self, path: WorkflowPath, delta: int) -> WorkflowPath:
+        siblings = _get(self.config, path[:-1]); index = _index(path); target = index + int(delta)
+        if not isinstance(siblings, list) or target < 0 or target >= len(siblings): return path
+        before = self.snapshot(); siblings.insert(target, siblings.pop(index)); self._commit(before)
+        return (*path[:-1], target)
+
     def move(self, path: WorkflowPath, parent: WorkflowPath, index: int | None = None) -> WorkflowPath:
-        before = self.snapshot(); step = deepcopy(_get(self.config, path)); del _get(self.config, path[:-1])[_index(path)]
-        target = _get(self.config, parent); insertion = len(target) if index is None else index; target.insert(insertion, step); self._commit(before)
+        if tuple(parent[:len(path)]) == tuple(path): raise ValueError("cannot move a step inside itself")
+        source = _get(self.config, path[:-1]); target = _get(self.config, parent)
+        if not isinstance(source, list) or not isinstance(target, list): raise TypeError("move paths must identify workflow lists")
+        if source is target:
+            desired = len(source) - 1 if index is None else max(0, min(int(index), len(source) - 1))
+            return self.move_sibling(path, desired - _index(path))
+        before = self.snapshot(); step = source.pop(_index(path)); insertion = len(target) if index is None else max(0, min(int(index), len(target)))
+        target.insert(insertion, step); self._commit(before)
         return (*parent, insertion)
 
     def wrap_steps(self, paths: Iterable[WorkflowPath], kind: str) -> WorkflowPath:
@@ -220,9 +296,16 @@ class WorkflowComposerModel:
     def validate_complete(self) -> tuple[ConfigDiagnostic, ...]:
         diagnostics: list[ConfigDiagnostic] = []; resources = self.config.get("resources", {}) if isinstance(self.config.get("resources"), dict) else {}
         states: dict[str, set[str]] = {name: set() for name in resources}; active: set[str] = set(); save_keys: set[str] = set()
+        sequence_macros: set[str] = set(); sequence_plans = self.config.get("sequence_plans", {}) if isinstance(self.config.get("sequence_plans"), dict) else {}
         safety = self.config.get("safety", {}) if isinstance(self.config.get("safety"), dict) else {}; allow_output = bool(safety.get("allow_output"))
         for section in ("setup", "procedure", "cleanup"):
             for path, step in _walk_steps(self.config.get(section, []), (section,)):
+                macro = step.get("sequence_sweep")
+                if isinstance(macro, dict):
+                    plan_id = str(macro.get("plan") or "")
+                    if plan_id not in sequence_plans: diagnostics.append(ConfigDiagnostic("error", "sequence_plan_not_found", f"Unknown sequence plan '{plan_id}'.", path, path))
+                    elif plan_id in sequence_macros: diagnostics.append(ConfigDiagnostic("error", "sequence_macro_duplicate", f"Sequence plan '{plan_id}' is linked more than once.", path, path))
+                    sequence_macros.add(plan_id)
                 call = step.get("call")
                 if not isinstance(call, str) or "." not in call: continue
                 resource, method = call.split(".", 1)
@@ -318,3 +401,10 @@ def _phase_group(phase: str) -> str:
 
 def _target_id(kind: str, path: WorkflowPath) -> str:
     return f"{kind}:" + "/".join(str(part) for part in path)
+
+def _step_kind(step: dict[str, Any]) -> str:
+    return next((kind for kind in ("call", *STRUCTURAL_KINDS) if kind in step), "unknown")
+
+def _set_enabled(step: dict[str, Any], enabled: bool) -> None:
+    if enabled: step.pop("enabled", None)
+    else: step["enabled"] = False

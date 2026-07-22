@@ -652,6 +652,36 @@ class OperatorController:
         self.parsed = None
         return path
 
+    def update_guided_action(self, path: WorkflowPath, values: dict[str, Any], save_as: str | None,
+                             *, enabled: bool = True) -> None:
+        self.workflow_composer().update_action(path, values, save_as, enabled=enabled); self.parsed = None
+
+    def update_guided_structure(self, path: WorkflowPath, fields: dict[str, Any], *, enabled: bool = True) -> None:
+        self.workflow_composer().update_structural(path, fields, enabled=enabled); self.parsed = None
+
+    def delete_guided_step(self, path: WorkflowPath) -> None:
+        self.workflow_composer().delete(path); self.parsed = None
+
+    def duplicate_guided_step(self, path: WorkflowPath) -> WorkflowPath:
+        result = self.workflow_composer().duplicate(path); self.parsed = None; return result
+
+    def move_guided_step(self, path: WorkflowPath, parent: WorkflowPath | None = None,
+                         *, delta: int | None = None) -> WorkflowPath:
+        if delta is not None: result = self.workflow_composer().move_sibling(path, delta)
+        elif parent is not None: result = self.workflow_composer().move(path, parent)
+        else: raise ValueError("move requires a destination or sibling delta")
+        self.parsed = None; return result
+
+    def undo_guided_workflow(self) -> bool:
+        changed = self.workflow_composer().undo()
+        if changed: self.parsed = None
+        return changed
+
+    def redo_guided_workflow(self) -> bool:
+        changed = self.workflow_composer().redo()
+        if changed: self.parsed = None
+        return changed
+
     def apply_workflow_recipe(self, name: str) -> None:
         self.workflow_composer().apply_recipe(name)
         self.sequence_sweep_model = None

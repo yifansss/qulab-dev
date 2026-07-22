@@ -445,7 +445,11 @@ PYTHONPATH=src python -m qulab.gui.pyqt_operator_app
 - `Add Workflow Block` 将 Measurement、Average、Run 或 Wait 放入 Setup、Procedure、Cleanup 或已有容器。
 - `Add Instrument Action` 从 resource adapter 的 ActionSpec 自动生成参数表单，并只显示目标 section 允许的 action。
 - `Add Scan` 只列出当前配置中可绑定的具体目标。普通 action 参数会被自动包入 scan 并替换成作用域引用；Sequence 参数写回 `sequence_plans` 并自动插入或更新唯一的 `sequence_sweep` 宏。
-- 右侧 canonical outline 和 continuity checks 在每次编辑后刷新；Sequence Sweep、Operator Parameters 和 Advanced Tree 同步看到修改。
+- 右侧 canonical outline 是完整编辑入口：选中已有 call/scan/average/measurement/run/wait/cleanup/sequence_sweep 后，使用 schema 表单修改参数、名称、scan values、timeout、plan link 和 enabled 状态。
+- 节点工具栏支持 Duplicate、Delete、Up、Down、Move inside、Undo 和 Redo。Delete 父节点会删除整个子树并要求确认；Move inside 会排除节点自身及其后代，防止循环嵌套。
+- 已注册 action 使用单位、choice、boolean 和引用感知的控件；允许 vendor kwargs 的 action 保留完整 Arguments JSON，避免编辑时丢失驱动参数。
+- continuity issue 双击后定位到对应 workflow 节点；重复链接同一 sequence plan、未知 plan、生命周期缺失、未保存 read result、save key 冲突和缺少 cleanup 都会明确显示。
+- Sequence Sweep、Operator Parameters、Guided Composer 和 Advanced Tree 始终观察同一 canonical config；主窗口 Prepare 仍是运行前的完整 schema、sequence generation、sync 和 hardware preflight 边界。
 
 NI retriggerable finite acquisition 的每次硬件 record 长度相同。双窗口 Rabi/ESR 通过 analysis module 分别设置 signal/reference 的 sample start/stop，从相同长度的两条原始 trace 中使用不同积分点数；原始 trace 仍完整保存。
 
