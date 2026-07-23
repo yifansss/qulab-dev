@@ -3,7 +3,7 @@ name: esr_pse_ai1_lmx_com12
 description: 'Hardware ESR sweep using an LMX2572 on COM12. The outer frequency
   scan is bound directly to mw.set_frequency. For each frequency, ASG Channel 1
   emits two PFI1 start edges and NI records two finite AI1 traces. With the USB-6451
-  internal sample clock at 1 MHz and five samples per record, the two Channel 2
+  internal sample clock at 1 MHz and five samples per record, the two Channel 1
   rising edges must be at least 5 us apart; use a larger margin on the sequence.
   '
 tags:
