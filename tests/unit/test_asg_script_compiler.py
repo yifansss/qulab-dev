@@ -109,5 +109,5 @@ def test_asg_arm_supports_proxy_style_upload_then_start_driver() -> None:
     adapter.compiled_code = _source({"rise": 1, "start_time": 5.0, "time_on": 20.0, "d": 10.0})
 
     assert adapter.arm() is True
-    assert calls[0][0] == "upload"
-    assert calls[1] == ("loop", 1)
+    assert calls[0] == ("loop", 1)
+    assert calls[1][0] == "upload"

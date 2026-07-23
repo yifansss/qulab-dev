@@ -24,7 +24,7 @@ def test_upload_and_run_propagates_upload_failure(monkeypatch) -> None:
     driver._check_connection = lambda: None
     driver.configure_free_mode = lambda: (_ for _ in ()).throw(AssertionError("mode must not be configured"))
     driver.upload_waveform = lambda code: False
-    driver.set_loop = lambda loop: (_ for _ in ()).throw(AssertionError("loop must not be set"))
+    driver.set_loop = lambda loop: True
 
     with pytest.raises(RuntimeError, match="waveform upload was rejected"):
         driver.upload_and_run("ASG_OUT[1] = s1", arm_only=True, configure_mode=False)
@@ -53,7 +53,7 @@ def test_upload_and_run_can_explicitly_configure_playback_mode(monkeypatch) -> N
     driver.set_loop = lambda loop: calls.append(("loop", loop)) or True
 
     assert driver.upload_and_run("ASG_OUT[1] = s1", loop=1, arm_only=True, configure_mode=True) is True
-    assert calls == ["mode", "upload", ("loop", 1)]
+    assert calls == ["mode", ("loop", 1), "upload"]
 
 
 def test_output_channel_configuration_propagates_register_failure(monkeypatch) -> None:
@@ -96,8 +96,12 @@ def test_free_mode_uses_vendor_documented_register_values(monkeypatch) -> None:
 
     assert driver.configure_free_mode(trigger="internal", clock="internal") is True
     assert ("/Waveform/CompileMode", 1) in calls
-    assert ("/Device/TriggerSwitch", 1) in calls
+    assert ("/Device/TriggerSwitch", 0) in calls
     assert ("/Device/IN1/ClockIn", 0) in calls
+
+    calls.clear()
+    assert driver.configure_free_mode(trigger="external", clock="internal") is True
+    assert ("/Device/TriggerSwitch", 1) in calls
 
 
 def test_upload_waveform_terminates_code_and_reports_sdk_error(monkeypatch) -> None:

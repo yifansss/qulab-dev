@@ -180,21 +180,28 @@ device: Dev2
 
 ### 2.6 ASG 必需 SDK
 
-国仪 ASG driver 可能需要厂商 SDK 文件，例如：
+国仪 ASG driver 需要厂商提供的完整 Python SDK 包。将
+`PythonSDK/asglib` 整个目录复制为：
 
 ```text
-asglib.py
-ASG24100_SDK_x64.dll
+drivers/pycontrol/PulseGenerator/asglib/
+├── __init__.py
+├── asglib.py
+├── x64/ASG24100_SDK_x64.dll
+└── Win32/ASG24100_SDK_Win32.dll
 ```
 
-按照 pycontrol driver 要求放入：
+该目录已由 pycontrol 的 `.gitignore` 排除，不会提交到 Git。不要只复制
+DLL 或把 `asglib.py` 从厂商目录结构中拆出。
+
+首次在一台电脑上安装或更新 SDK 时，还必须运行：
 
 ```text
-drivers/pycontrol/PulseGenerator/
-drivers/pycontrol/PulseGenerator/x64/
+ASG24100_SDK_V1.2_20240719/asgparser/copy_to_appdata.bat
 ```
 
-具体位置以当前 `drivers/pycontrol/PulseGenerator/driver.py` 的 import/ctypes 查找逻辑为准。
+并确认 `%APPDATA%/asg24100parser/script-main.exe` 存在。完整厂商 SDK
+原目录应保存在仓库外；项目内只放上述被忽略的运行时副本。
 
 ### 2.7 LMX 微波源和串口
 
@@ -938,11 +945,13 @@ device: Dev2
 
 ### 8.4 ASG SDK 缺失
 
-检查厂商 SDK 文件是否在 pycontrol driver 期望位置，例如：
+检查完整厂商 Python SDK 包和波形解释器是否在预期位置：
 
 ```text
-drivers/pycontrol/PulseGenerator/asglib.py
-drivers/pycontrol/PulseGenerator/x64/ASG24100_SDK_x64.dll
+drivers/pycontrol/PulseGenerator/asglib/__init__.py
+drivers/pycontrol/PulseGenerator/asglib/asglib.py
+drivers/pycontrol/PulseGenerator/asglib/x64/ASG24100_SDK_x64.dll
+%APPDATA%/asg24100parser/script-main.exe
 ```
 
 ### 8.5 LMX 串口错误

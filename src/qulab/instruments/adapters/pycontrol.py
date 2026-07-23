@@ -360,10 +360,10 @@ class PycontrolASGAdapter(_PycontrolAdapterBase):
                     "ASG24100.upload_and_run(arm_only)",
                 )
             else:
-                _require_success(self._driver.upload_waveform(self.compiled_code), "ASG24100.upload_waveform")
                 set_loop = getattr(self._driver, "set_loop", None)
                 if callable(set_loop):
                     _require_success(set_loop(int(self.config.get("loop", 1))), "ASG24100.set_loop")
+                _require_success(self._driver.upload_waveform(self.compiled_code), "ASG24100.upload_waveform")
         self.armed = True
         return True
 

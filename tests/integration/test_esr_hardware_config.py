@@ -11,6 +11,7 @@ CONFIG = ROOT / "configs/experiments/esr_pse_ai1_lmx_com12.yaml"
 
 def test_esr_frequency_scan_is_bound_to_lmx_and_uses_supported_ai_timing() -> None:
     parsed = parse_experiment_config(load_experiment_config(CONFIG))
+    asg = parsed.config["resources"]["asg"]
     scan = parsed.procedure.body[0]
     assert isinstance(scan, ScanStep)
     point = scan.body[0]
@@ -25,6 +26,9 @@ def test_esr_frequency_scan_is_bound_to_lmx_and_uses_supported_ai_timing() -> No
     assert configure.kwargs["sample_clock"] is None
     assert configure.kwargs["trigger_count"] == 2
     assert frequency.kwargs["freq_hz"].name == "mw_freq_hz"
+    assert asg["configure_playback_mode"] is True
+    assert asg["trigger"] == "internal"
+    assert asg["loop"] == 1
     assert parsed.procedure.metadata["storage"]["backends"] == ["zarr"]
 
 

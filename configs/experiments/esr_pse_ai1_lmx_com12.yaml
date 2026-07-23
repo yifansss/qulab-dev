@@ -34,6 +34,13 @@ resources:
     pycontrol_path: drivers/pycontrol
     voltage_level: 0
     impedance: 0
+    configure_playback_mode: true
+    play_mode: 1
+    trigger: internal
+    trigger_edge: rising
+    clock: internal
+    loop: 1
+    configure_childcards: false
     sequence_file: configs/sequences/rabi.json
   daq:
     adapter: pycontrol_ni
