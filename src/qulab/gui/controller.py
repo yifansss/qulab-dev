@@ -356,18 +356,41 @@ class OperatorController:
         """Cancel the active executor and stop hardware to unblock pending reads."""
         with self._run_lock:
             executor = self._active_executor
-            resources = tuple(self._active_resources.values())
+            resources = dict(self._active_resources)
         if executor is None:
             return False
         executor.request_stop()
-        for resource in resources:
+        self._emergency_stop_resources(resources)
+        return True
+
+    @staticmethod
+    def _emergency_stop_resources(resources: dict[str, Any]) -> None:
+        """Best-effort output shutdown, with pulse generators stopped first."""
+        values = tuple(resources.values())
+        def is_pulse_sequencer(resource: Any) -> bool:
+            capabilities = getattr(resource, "capabilities", ())
+            try:
+                values = capabilities() if callable(capabilities) else capabilities
+            except Exception:
+                return False
+            return "pulse_sequencer" in set(values or ())
+
+        pulse = tuple(resource for resource in values if is_pulse_sequencer(resource))
+        others = tuple(resource for resource in values if resource not in pulse)
+        for resource in (*pulse, *others):
             stop = getattr(resource, "stop", None)
             if callable(stop):
                 try:
                     stop()
                 except Exception:
                     pass
-        return True
+        for resource in values:
+            output_off = getattr(resource, "output_off", None)
+            if callable(output_off):
+                try:
+                    output_off()
+                except Exception:
+                    pass
 
     def reset_live_state(self, max_points: int = 1000) -> None:
         parsed = self.parsed
@@ -907,6 +930,7 @@ class OperatorController:
 
     def _disconnect_resources(self, resources: dict[str, Any]) -> None:
         first_error: BaseException | None = None
+        self._emergency_stop_resources(resources)
         for resource in reversed(list(resources.values())):
             if getattr(resource, "simulation", False):
                 continue

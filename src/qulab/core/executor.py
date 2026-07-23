@@ -85,13 +85,19 @@ class ExperimentExecutor:
 
     def _run_cleanup(self) -> BaseException | None:
         self._in_cleanup = True
+        first_failure: BaseException | None = None
         try:
-            self._execute_steps(self.procedure.cleanup)
-        except BaseException as exc:
-            return exc
+            # Cleanup is fail-safe rather than transactional: one unavailable
+            # instrument must not prevent later output-disable actions.
+            for step in self.procedure.cleanup:
+                try:
+                    self._execute_step(step)
+                except BaseException as exc:
+                    if first_failure is None:
+                        first_failure = exc
         finally:
             self._in_cleanup = False
-        return None
+        return first_failure
 
     def _execute_steps(self, steps: list[Step]) -> None:
         for step in steps:

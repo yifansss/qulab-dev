@@ -63,3 +63,20 @@ def test_asg_arm_compiles_json_enables_used_channel_and_uploads_script() -> None
     assert calls[1][0] == "upload"
     assert "ASG_OUT[1]" in calls[1][1]
     assert adapter.output_channels == [1]
+
+
+def test_asg_stop_uses_driver_safe_stop_for_active_channels() -> None:
+    calls = []
+
+    class Driver:
+        def safe_stop(self, channels):
+            calls.append(channels)
+            return True
+
+    adapter = PycontrolASGAdapter("asg", {})
+    adapter.connected = True
+    adapter._driver = Driver()
+    adapter.output_channels = [1, 2]
+
+    assert adapter.stop() is False
+    assert calls == [[1, 2]]

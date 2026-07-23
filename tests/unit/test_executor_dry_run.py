@@ -236,3 +236,20 @@ def test_stop_request_cancels_scan_and_still_runs_cleanup() -> None:
     assert bus.events[-1].type == "RunCompleted"
     assert bus.events[-1].status == "cancelled"
     assert not [event for event in bus.events if event.type == "ErrorRaised"]
+
+
+def test_cleanup_continues_after_one_resource_cleanup_fails() -> None:
+    calls = []
+    procedure = Procedure(
+        name="cleanup_best_effort",
+        body=[ActionStep(name="fail", action=lambda: (_ for _ in ()).throw(RuntimeError("run failed")))],
+        cleanup=[
+            ActionStep(name="bad_cleanup", action=lambda: (_ for _ in ()).throw(RuntimeError("stop failed"))),
+            ActionStep(name="safe_cleanup", action=lambda: calls.append("stopped")),
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="run failed"):
+        ExperimentExecutor(procedure).run()
+
+    assert calls == ["stopped"]

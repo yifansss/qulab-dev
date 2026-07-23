@@ -329,10 +329,21 @@ class PycontrolASGAdapter(_PycontrolAdapterBase):
 
     def stop(self) -> bool:
         if self._driver is not None and self.connected:
-            _require_success(self._driver.stop(), "ASG24100.stop")
+            safe_stop = getattr(self._driver, "safe_stop", None)
+            if callable(safe_stop):
+                _require_success(safe_stop(self.output_channels or None), "ASG24100.safe_stop")
+            else:
+                _require_success(self._driver.stop(), "ASG24100.stop")
         self.running = False
         self.armed = False
         return False
+
+    def disconnect(self) -> None:
+        try:
+            self.stop()
+        except Exception:
+            pass
+        super().disconnect()
 
     def sequence_snapshot(self) -> dict[str, Any]:
         return {
