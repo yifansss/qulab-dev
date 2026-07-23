@@ -1,11 +1,11 @@
 schema_version: 1
-name: esr_pse_ai2_lmx_com12
+name: esr_pse_ai1_lmx_com12
 description: >
   Hardware ESR sweep using an LMX2572 on COM12. LMX frequency is scanned in
   the outer workflow. At each frequency, ASG Channel 1 gates the microwave
-  path and ASG Channel 2 emits two NI Dev2/PFI1 starts, yielding two AI2
+  path and ASG Channel 2 emits two NI Dev2/PFI1 starts, yielding two AI1
   fluorescence records whose individual means and ratio are stored live.
-tags: [hardware, esr, lmx, com12, pse, ai2, asg_master]
+tags: [hardware, esr, lmx, com12, pse, ai1, asg_master]
 
 safety:
   requires_allow_output: true
@@ -16,17 +16,17 @@ safety:
     - Set a safe LMX board amplitude level and verify RF power independently.
     - Verify ASG Channel 1 gates the microwave path as intended.
     - Verify both ASG Channel 2 edges reach NI Dev2/PFI1 on an oscilloscope.
-    - Verify PSE output is within the allowed AI2 differential input range.
+    - Verify PSE output is within the allowed AI1 differential input range.
 
 bench:
   wiring:
     - LMX RFH output -> microwave chain; ASG Channel 1 -> its gate or trigger input.
     - ASG Channel 2 -> NI Dev2/PFI1 AI start trigger.
-    - PSE analog output -> NI Dev2/ai2 differential input.
+    - PSE analog output -> NI Dev2/ai1 differential input.
   expected_observation:
     - LMX RFH frequency steps once per ESR point while Channel 1 timing remains fixed.
     - Channel 2 produces exactly two rising edges per ASG sequence.
-    - NI returns two AI2 records and live view shows their means and ratio versus mw_freq_hz.
+    - NI returns two AI1 records and live view shows their means and ratio versus mw_freq_hz.
 
 resources:
   mw:
@@ -57,15 +57,17 @@ sequence_plans:
   esr_readout:
     resource: asg
     family: {provider: qulab.sequence_generation.providers.asg_template, version: "1"}
-    template: configs/sequences/rabi_two_trace_channel2_trigger.json
+    # This source template is supplied in configs/sequences on the lab PC.
+    template: configs/sequences/rabi.json
     targets:
       mw_gate: {channel: Channel 1, pulse: 0}
       signal_trigger: {channel: Channel 2, pulse: 0}
       reference_trigger: {channel: Channel 2, pulse: 1}
     parameters:
       mw_gate_s:
-        # A single explicit point keeps the generic sequence compiler's
-        # coordinate contract while leaving the ESR scan dimension as frequency.
+        # A single sequence variant today. It is intentionally the outer
+        # coordinate: each future sequence setting acquires a full ESR sweep.
+        # It does not define the NI readout duration.
         mode: explicit
         values: [1000.0e-9]
         unit: s
@@ -74,7 +76,7 @@ sequence_plans:
           property: duration
           propagation: {mode: none}
     sampling: {mode: cartesian, order: [mw_gate_s]}
-    materialize: {cache: true, max_points: 1}
+    materialize: {cache: true, max_points: 501}
     options:
       trigger_channels: [ch2]
       readout_window_s: 1.0e-3
@@ -98,7 +100,7 @@ setup:
   - call: mw.output_on
   - call: daq.configure_ai_external_trigger
     args:
-      channels: [ai2]
+      channels: [ai1]
       sample_rate: 1000000
       samples: 1000
       start_trigger: PFI1
@@ -108,25 +110,25 @@ setup:
       trigger_count: 2
 
 procedure:
-  - scan:
-      name: mw_freq_hz
-      values: {start: 2.80e9, stop: 2.95e9, points: 151}
+  - sequence_sweep:
+      plan: esr_readout
       body:
         - measurement:
-            name: esr_frequency_point
+            name: esr_sequence_setting
             body:
-              - call: mw.set_frequency
-                args: {freq_hz: "${mw_freq_hz}"}
-              - wait: {name: lmx_settle, duration_s: 0.01}
-              - sequence_sweep:
-                  plan: esr_readout
+              - scan:
+                  name: mw_freq_hz
+                  values: {start: 2.80e9, stop: 2.95e9, points: 151}
                   body:
                     - measurement:
-                        name: esr_readout_point
+                        name: esr_frequency_point
                         body:
+                          - call: mw.set_frequency
+                            args: {freq_hz: "${mw_freq_hz}"}
+                          - wait: {name: lmx_settle, duration_s: 0.01}
                           - call: asg.compile_sequence
                           - run:
-                              name: asg_triggered_ai2
+                              name: asg_triggered_ai1
                               timeout_s: 5
                               steps:
                                 - call: daq.arm
