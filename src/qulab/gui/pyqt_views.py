@@ -16,7 +16,7 @@ from .models import format_parameter_value, parse_parameter_value
 from .plot_model import PlotSeries
 from .plot_canvas import LineSeriesView, scientific_plot_canvas_class
 from .qt_compat import QT_AVAILABLE, QtCore, QtGui, QtWidgets, missing_qt_message
-from .sequence_bridge import default_sequence_editor_path, open_sequence_editor
+from .sequence_bridge import default_sequence_editor_path, open_sequence_editor, parse_editor_protocol
 from .sequence_authoring_view import create_guided_sequence_widget
 from .theme import classic_qt_stylesheet
 from .workflow_model import WorkflowNode, make_default_step
@@ -1363,14 +1363,32 @@ if QT_AVAILABLE:
 
         def _handle_sequence_editor_done(self, item: tuple[Any, ...]) -> None:
             _, sequence_path, stdout, stderr, returncode = item
-            if stdout and stdout.strip():
+            result = parse_editor_protocol(stdout or "", stderr or "")
+            if not result.ok:
+                message = result.message or f"Sequence editor exited with {returncode}."
+                self._log(f"Sequence editor result rejected: {message}")
+                QtWidgets.QMessageBox.warning(self, "Sequence editor", message)
+            elif result.saved_artifact:
+                saved_path = str(result.saved_artifact.get("path") or sequence_path)
                 try:
-                    params = json.loads(stdout)
-                except json.JSONDecodeError:
-                    self._log("Sequence editor returned non-JSON output; file watcher refresh was used instead.")
-                else:
-                    Path(sequence_path).write_text(json.dumps(params, indent=2, ensure_ascii=False), encoding="utf-8")
-                    self._log(f"Sequence editor output saved: {sequence_path}")
+                    with Path(saved_path).open("r", encoding="utf-8") as handle:
+                        saved_sequence = json.load(handle)
+                    if not isinstance(saved_sequence, list):
+                        raise ValueError("Saved sequence root must be a channel list.")
+                    if self._selected_load_sequence_node() is not None:
+                        self._update_selected_load_sequence_file(saved_path)
+                    else:
+                        resource = self._selected_sequence_resource()
+                        if resource:
+                            self.controller.update_sequence_file(resource, saved_path)
+                    sequence_path = saved_path
+                    self._log(f"Sequence editor saved pulse JSON: {saved_path}")
+                except Exception as exc:
+                    message = f"Sequence editor reported a save, but the pulse JSON could not be verified: {exc}"
+                    self._log(message)
+                    QtWidgets.QMessageBox.warning(self, "Sequence editor", message)
+            elif returncode == 0:
+                self._log("Sequence editor closed without saving a sequence artifact.")
             if stderr and stderr.strip():
                 self._log(f"Sequence editor stderr: {stderr.strip()}")
             self._watch_sequence_file(sequence_path)

@@ -170,6 +170,194 @@ def _get_channel_pbn(ch: dict, default_idx: int) -> int:
     return default_idx
 
 
+def export_to_legacy(channels: list, filepath: str):
+    """Exports the sequence channels structure to the legacy MATLAB tab-separated text format."""
+    with open(filepath, "w", encoding="utf-8") as f:
+        for i, ch in enumerate(channels):
+            pulses = ch.get("pulses", [])
+            if not pulses:
+                continue
+
+            # Gather all individual pulse repetitions (events)
+            individual_pulses = []
+            for p in pulses:
+                rise = int(p.get("rise", 1))
+                ton = float(p.get("time_on", 1.0))
+                d = float(p.get("d", 10.0))
+                p_start = float(p.get("start_time", 0.0))
+                phas = float(p.get("phas", 0.0))
+                p_type = str(p.get("type", "notype"))
+
+                for k in range(rise):
+                    t_s = p_start + k * d
+                    individual_pulses.append({
+                        "t_start": t_s * 1e-6,      # convert µs to seconds
+                        "duration": ton * 1e-6,      # convert µs to seconds
+                        "phase": int(phas),
+                        "type": p_type
+                    })
+
+            # Sort events chronologically by start time
+            individual_pulses.sort(key=lambda x: x["t_start"])
+            n_rise = len(individual_pulses)
+            pbn = _get_channel_pbn(ch, i)
+
+            # Write Channel Header
+            f.write(f"PB{pbn}\t{n_rise}\n")
+
+            # Write T (Start times)
+            t_str = "\t".join(f"{x['t_start']:.10f}" for x in individual_pulses)
+            f.write(f"{t_str}\t\n")
+
+            # Write DT (Durations)
+            dt_str = "\t".join(f"{x['duration']:.10f}" for x in individual_pulses)
+            f.write(f"{dt_str}\t\n")
+
+            # Write Phases
+            phase_str = "\t".join(str(x["phase"]) for x in individual_pulses)
+            f.write(f"{phase_str}\t\n")
+
+            # Write Types
+            type_str = "\t".join(x["type"] for x in individual_pulses)
+            f.write(f"{type_str}\t\n")
+
+            # Write Delays [DelayON, DelayOFF]
+            delay_on = float(ch.get("delay_on", 0.0)) * 1e-6
+            delay_off = float(ch.get("delay_off", 0.0)) * 1e-6
+            f.write(f"{delay_on:.10f}\t{delay_off:.10f}\t\n")
+
+        # Trailing comments marker
+        f.write("\nComments:\n")
+
+
+def parse_legacy_sequence(filepath: str) -> list:
+    """Parses a legacy MATLAB-style tab-separated sequence text file into the new format."""
+    channels = []
+    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+        content = f.read()
+
+    lines = [line.strip() for line in content.split("\n")]
+    line_idx = 0
+    num_lines = len(lines)
+
+    while line_idx < num_lines:
+        line = lines[line_idx].strip()
+        if not line:
+            line_idx += 1
+            continue
+
+        if line.startswith("PB"):
+            # Line format: "PB<PBN>\t<NRise>"
+            parts = line.split()
+            if len(parts) < 2:
+                line_idx += 1
+                continue
+
+            pbn_str = parts[0][2:]
+            try:
+                pbn = int(pbn_str)
+                n_rise = int(parts[1])
+            except ValueError:
+                line_idx += 1
+                continue
+
+            # Read T (Start times)
+            line_idx += 1
+            while line_idx < num_lines and not lines[line_idx].strip():
+                line_idx += 1
+            if line_idx >= num_lines:
+                break
+            t_values = [float(val) * 1e6 for val in lines[line_idx].split() if val]
+
+            # Read DT (Durations / Time ON)
+            line_idx += 1
+            while line_idx < num_lines and not lines[line_idx].strip():
+                line_idx += 1
+            if line_idx >= num_lines:
+                break
+            dt_values = [float(val) * 1e6 for val in lines[line_idx].split() if val]
+
+            # Read Phases
+            line_idx += 1
+            while line_idx < num_lines and not lines[line_idx].strip():
+                line_idx += 1
+            if line_idx >= num_lines:
+                break
+            phase_values = []
+            for val in lines[line_idx].split():
+                try:
+                    phase_values.append(float(val))
+                except ValueError:
+                    pass
+            if len(phase_values) < n_rise:
+                phase_values += [0.0] * (n_rise - len(phase_values))
+
+            # Read Types
+            line_idx += 1
+            while line_idx < num_lines and not lines[line_idx].strip():
+                line_idx += 1
+            if line_idx >= num_lines:
+                break
+            type_values = [val for val in lines[line_idx].split() if val]
+            if len(type_values) < n_rise:
+                type_values += ["notype"] * (n_rise - len(type_values))
+
+            # Read Delays [DelayON, DelayOFF]
+            line_idx += 1
+            while line_idx < num_lines and not lines[line_idx].strip():
+                line_idx += 1
+            if line_idx >= num_lines:
+                break
+            delay_values = []
+            for val in lines[line_idx].split():
+                try:
+                    delay_values.append(float(val) * 1e6)
+                except ValueError:
+                    pass
+            if len(delay_values) < 2:
+                delay_values = [0.0, 0.0]
+
+            delay_on = delay_values[0]
+            delay_off = delay_values[1]
+
+            # Reconstruct pulses list. In new format, each event becomes a single-pulse block.
+            pulses = []
+            for i in range(min(n_rise, len(t_values), len(dt_values))):
+                pulses.append({
+                    "rise": 1,
+                    "time_on": dt_values[i],
+                    "d": dt_values[i] + 10.0,  # default cycle period > time_on
+                    "type": type_values[i],
+                    "phas": phase_values[i],
+                    "pbn": pbn,
+                    "start_time": t_values[i]
+                })
+
+            channels.append({
+                "channel_name": f"Channel {len(channels) + 1}",
+                "delay_on": delay_on,
+                "delay_off": delay_off,
+                "pulses": pulses,
+                "pbn": pbn
+            })
+
+            line_idx += 1
+        elif line.startswith("Comments:"):
+            break
+        else:
+            line_idx += 1
+
+    # Fill remaining channels up to 4 to match UI standard
+    while len(channels) < 4:
+        channels.append({
+            "channel_name": f"Channel {len(channels) + 1}",
+            "delay_off": 0.0,
+            "pulses": []
+        })
+
+    return channels
+
+
 class ChannelRow(QWidget):
     """One row of pulse parameters in the selected channel table."""
     changed = pyqtSignal()
@@ -671,6 +859,14 @@ class EditSequenceDialog(QDialog):
         self.btn_save_as = QPushButton("Save As… / 另存为…")
         self.btn_save_as.clicked.connect(self.save_sequence_as)
         toolbar.addWidget(self.btn_save_as)
+
+        self.btn_import_legacy = QPushButton("Import Legacy / 导入Legacy")
+        self.btn_import_legacy.clicked.connect(self.import_legacy_sequence)
+        toolbar.addWidget(self.btn_import_legacy)
+
+        self.btn_export_legacy = QPushButton("Export Legacy / 导出Legacy")
+        self.btn_export_legacy.clicked.connect(self.export_legacy_sequence)
+        toolbar.addWidget(self.btn_export_legacy)
         toolbar.addStretch()
         root.addLayout(toolbar)
 
@@ -1188,6 +1384,29 @@ class EditSequenceDialog(QDialog):
             QMessageBox.information(self, "Success / 成功", f"Sequence exported successfully to:\n{path}")
         except Exception as e:
             QMessageBox.critical(self, "Error / 错误", f"Failed to save sequence: {e}")
+
+    def import_legacy_sequence(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Import Legacy Sequence / 导入旧版时序", "", "Text Files (*.txt);;All (*)")
+        if not path:
+            return
+        try:
+            parsed_channels = parse_legacy_sequence(path)
+            self.load_params(parsed_channels)
+            self.active_file = ""  # Reset active JSON file path since this is imported
+            QMessageBox.information(self, "Success / 成功", f"Legacy sequence imported successfully from:\n{path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Error / 错误", f"Failed to import legacy sequence: {e}")
+
+    def export_legacy_sequence(self):
+        self.save_current_channel_pulses()
+        path, _ = QFileDialog.getSaveFileName(self, "Export Legacy Sequence / 导出旧版时序", "", "Text Files (*.txt);;All (*)")
+        if not path:
+            return
+        try:
+            export_to_legacy(self.channels, path)
+            QMessageBox.information(self, "Success / 成功", f"Sequence exported successfully in legacy format to:\n{path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Error / 错误", f"Failed to export legacy sequence: {e}")
 
     def _redraw(self):
         if hasattr(self, "canvas"):

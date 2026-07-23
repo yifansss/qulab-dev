@@ -8,6 +8,7 @@ import sys
 import hashlib
 from contextlib import redirect_stdout
 from pathlib import Path
+from typing import Any
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -27,9 +28,11 @@ def main(argv: list[str] | None = None) -> int:
         result = dialog.exec_()
         params = dialog.get_params() if result == module.QDialog.Accepted else []
     saved = None
-    active = Path(str(getattr(dialog, "active_file", "")))
-    if result == module.QDialog.Accepted and active.is_file():
-        saved = {"path": str(active), "sha256": hashlib.sha256(active.read_bytes()).hexdigest()}
+    if result == module.QDialog.Accepted:
+        active_path = str(getattr(dialog, "active_file", "")).strip()
+        target = Path(active_path) if active_path else sequence_path
+        if target is not None:
+            saved = _write_sequence_artifact(target, params)
     pulse_count = sum(len(ch.get("pulses", [])) for ch in params if isinstance(ch, dict))
     payload = {"protocol_version": 1, "editor_version": "1", "capabilities": ["open", "edit_channels", "edit_pulses", "validate", "preview", "save"],
                "source": None if sequence_path is None else str(sequence_path), "dirty": result != module.QDialog.Accepted,
@@ -38,6 +41,17 @@ def main(argv: list[str] | None = None) -> int:
     print(json.dumps(payload, sort_keys=True, separators=(",", ":")), flush=True)
     app.processEvents()
     return 0
+
+
+def _write_sequence_artifact(path: Path, params: Any) -> dict[str, str]:
+    """Persist only editor pulse data; protocol data is stdout-only."""
+    if not isinstance(params, list):
+        raise RuntimeError("Sequence editor returned invalid pulse data; expected a channel list.")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(json.dumps(params, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    temporary.replace(path)
+    return {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
 
 
 def _load_editor_module(editor_path: Path):
