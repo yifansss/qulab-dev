@@ -26,7 +26,20 @@ def test_upload_and_run_propagates_upload_failure(monkeypatch) -> None:
     driver.upload_waveform = lambda code: False
     driver.set_loop = lambda loop: (_ for _ in ()).throw(AssertionError("loop must not be set"))
 
-    assert driver.upload_and_run("ASG_OUT[1] = s1", arm_only=True, configure_mode=False) is False
+    with pytest.raises(RuntimeError, match="waveform upload was rejected"):
+        driver.upload_and_run("ASG_OUT[1] = s1", arm_only=True, configure_mode=False)
+
+
+def test_upload_and_run_reports_rejected_loop(monkeypatch) -> None:
+    cls = _driver_class(monkeypatch)
+    driver = object.__new__(cls)
+    driver._is_sim = False
+    driver._check_connection = lambda: None
+    driver.upload_waveform = lambda code: True
+    driver.set_loop = lambda loop: False
+
+    with pytest.raises(RuntimeError, match=r"/loop=1"):
+        driver.upload_and_run("ASG_OUT[1] = s1", arm_only=True, configure_mode=False)
 
 
 def test_upload_and_run_can_explicitly_configure_playback_mode(monkeypatch) -> None:
