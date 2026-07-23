@@ -73,6 +73,7 @@ class _Task:
         self.triggers = types.SimpleNamespace(start_trigger=_StartTrigger())
         self.started = False
         self.start_count = 0
+        self.closed = False
         self.writes = []
 
     def start(self):
@@ -83,7 +84,7 @@ class _Task:
         self.started = False
 
     def close(self):
-        pass
+        self.closed = True
 
     def write(self, data, auto_start=False):
         self.writes.append((data, auto_start))
@@ -241,6 +242,7 @@ def test_ai_retriggerable_returns_one_record_per_trigger(monkeypatch) -> None:
         ]
         assert result["data"]["time_axis_s"] == [0.0, 1e-06, 2e-06]
         assert "ai" not in driver._tasks
+        assert task.closed is True
         assert driver._armed is False and driver._started is False
     finally:
         _cleanup_pycontrol_imports()
