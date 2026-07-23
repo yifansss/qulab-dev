@@ -255,7 +255,8 @@ class PycontrolASGAdapter(_PycontrolAdapterBase):
             use_proxy = _bool_config(self.config, "use_proxy", True)
             if use_proxy:
                 driver_cls = _load_driver(self.config, "PulseGenerator.asg_process", "ASGProxy")
-                self._driver = driver_cls()
+                pycontrol_path = _resolve_pycontrol_path(self.config)
+                self._driver = driver_cls(package_path=None if pycontrol_path is None else str(pycontrol_path))
             else:
                 driver_cls = _load_driver(self.config, "PulseGenerator.driver", "ASG24100Driver")
                 self._driver = driver_cls(verbose=_bool_config(self.config, "verbose", False), force_simulation=False)
