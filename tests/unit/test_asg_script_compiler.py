@@ -59,7 +59,7 @@ def test_asg_arm_compiles_json_enables_used_channel_and_uploads_script() -> None
     adapter.compiled_code = _source({"rise": 1, "start_time": 5.0, "time_on": 20.0, "d": 10.0})
 
     assert adapter.arm() is True
-    assert calls[0] == ("outputs", {"channel_limit": 1, "voltage_level": 0, "impedance": 0})
+    assert calls[0] == ("outputs", {"channel_limit": 1, "voltage_level": 0, "impedance": 0, "configure_childcards": False})
     assert calls[1][0] == "upload"
     assert "ASG_OUT[1]" in calls[1][1]
     assert adapter.output_channels == [1]

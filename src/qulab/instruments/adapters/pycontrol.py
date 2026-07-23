@@ -313,6 +313,7 @@ class PycontrolASGAdapter(_PycontrolAdapterBase):
                         channel_limit=max(self.output_channels),
                         voltage_level=int(self.config.get("voltage_level", 0)),
                         impedance=int(self.config.get("impedance", 0)),
+                        configure_childcards=_bool_config(self.config, "configure_childcards", False),
                     ),
                     "ASG24100.configure_output_channels",
                 )

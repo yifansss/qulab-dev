@@ -34,7 +34,8 @@ def test_output_channel_configuration_propagates_register_failure(monkeypatch) -
     driver = object.__new__(cls)
     driver._is_sim = False
     driver._check_connection = lambda: None
-    driver.set_param_int = lambda path, value: path != "/Device/C1/Output"
+    driver.set_param_int = lambda path, value: not path.startswith("/Device/ChildCard")
 
-    with pytest.raises(RuntimeError, match=r"/Device/C1/Output"):
-        driver.configure_output_channels(channel_limit=1)
+    assert driver.configure_output_channels(channel_limit=1) is True
+    with pytest.raises(RuntimeError, match=r"/Device/ChildCard1/OutputLevel"):
+        driver.configure_output_channels(channel_limit=1, configure_childcards=True)
