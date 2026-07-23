@@ -42,7 +42,9 @@ def compile_asg_sequence_json(source: str) -> str:
         )
     if not lines:
         raise SequenceGenerationError("sequence_compile_empty", "ASG sequence has no pulse outputs")
-    return "\n".join(lines)
+    # Match the vendor SDK example: every statement, including the final one,
+    # is newline-terminated before the buffer is submitted to the parser.
+    return "\n".join(lines) + "\n"
 
 
 def is_asg_sequence_json(source: str) -> bool:

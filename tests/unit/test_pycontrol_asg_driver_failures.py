@@ -66,3 +66,42 @@ def test_output_channel_configuration_propagates_register_failure(monkeypatch) -
     assert driver.configure_output_channels(channel_limit=1) is True
     with pytest.raises(RuntimeError, match=r"/Device/ChildCard1/OutputLevel"):
         driver.configure_output_channels(channel_limit=1, configure_childcards=True)
+
+
+def test_free_mode_uses_vendor_documented_register_values(monkeypatch) -> None:
+    cls = _driver_class(monkeypatch)
+    driver = object.__new__(cls)
+    driver._is_sim = False
+    driver._check_connection = lambda: None
+    driver.stop = lambda: True
+    calls = []
+    driver.set_param_int = lambda path, value: calls.append((path, value)) or True
+
+    assert driver.configure_free_mode(trigger="internal", clock="internal") is True
+    assert ("/Waveform/CompileMode", 1) in calls
+    assert ("/Device/TriggerSwitch", 1) in calls
+    assert ("/Device/IN1/ClockIn", 0) in calls
+
+
+def test_upload_waveform_terminates_code_and_reports_sdk_error(monkeypatch) -> None:
+    cls = _driver_class(monkeypatch)
+    driver = object.__new__(cls)
+    driver._is_sim = False
+    driver._dev_name = "ASG24100123"
+    driver._check_connection = lambda: None
+    calls = []
+
+    class SDK:
+        @staticmethod
+        def ASG_DownloadWaveformCode(device, code):
+            calls.append((device, code))
+            return -7
+
+        @staticmethod
+        def ASG_GetErrorInfo(code):
+            return "parser error"
+
+    driver._asglib = SDK()
+    with pytest.raises(RuntimeError, match=r"SDK code -7: parser error"):
+        driver.upload_waveform("ASG_OUT[1] = s1")
+    assert calls == [("ASG24100123", "ASG_OUT[1] = s1\n")]

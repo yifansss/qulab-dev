@@ -325,6 +325,18 @@ class PycontrolASGAdapter(_PycontrolAdapterBase):
             self.output_channels = sorted(
                 {int(channel) for channel in re.findall(r"ASG_OUT\s*\[\s*(\d+)\s*\]", self.compiled_code)}
             )
+            configure_mode = _bool_config(self.config, "configure_playback_mode", True)
+            configure_free_mode = getattr(self._driver, "configure_free_mode", None)
+            if configure_mode and callable(configure_free_mode):
+                _require_success(
+                    configure_free_mode(
+                        play_mode=int(self.config.get("play_mode", 1)),
+                        trigger=str(self.config.get("trigger", "internal")),
+                        trigger_edge=str(self.config.get("trigger_edge", "rising")),
+                        clock=str(self.config.get("clock", "internal")),
+                    ),
+                    "ASG24100.configure_free_mode",
+                )
             configure_outputs = getattr(self._driver, "configure_output_channels", None)
             if self.output_channels and callable(configure_outputs):
                 _require_success(
@@ -343,7 +355,7 @@ class PycontrolASGAdapter(_PycontrolAdapterBase):
                         self.compiled_code,
                         loop=int(self.config.get("loop", 1)),
                         arm_only=True,
-                        configure_mode=_bool_config(self.config, "configure_playback_mode", False),
+                        configure_mode=False,
                     ),
                     "ASG24100.upload_and_run(arm_only)",
                 )
