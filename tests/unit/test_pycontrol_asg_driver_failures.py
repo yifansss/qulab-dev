@@ -68,6 +68,23 @@ def test_output_channel_configuration_propagates_register_failure(monkeypatch) -
         driver.configure_output_channels(channel_limit=1, configure_childcards=True)
 
 
+def test_output_channel_configuration_clears_always_high_before_enable(monkeypatch) -> None:
+    cls = _driver_class(monkeypatch)
+    driver = object.__new__(cls)
+    driver._is_sim = False
+    driver._check_connection = lambda: None
+    calls = []
+    driver.set_param_int = lambda path, value: calls.append((path, value)) or True
+
+    assert driver.configure_output_channels(channel_limit=2) is True
+    assert calls == [
+        ("/Device/C1/AlwaysHighlevel", 0),
+        ("/Device/C1/Output", 1),
+        ("/Device/C2/AlwaysHighlevel", 0),
+        ("/Device/C2/Output", 1),
+    ]
+
+
 def test_free_mode_uses_vendor_documented_register_values(monkeypatch) -> None:
     cls = _driver_class(monkeypatch)
     driver = object.__new__(cls)
