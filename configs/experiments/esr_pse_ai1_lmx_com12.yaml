@@ -1,0 +1,222 @@
+schema_version: 1
+name: esr_pse_ai1_lmx_com12
+description: 'Hardware ESR sweep using an LMX2572 on COM12. The outer frequency
+  scan is bound directly to mw.set_frequency. For each frequency, ASG Channel 2
+  emits two PFI1 start edges and NI records two finite AI1 traces. With the USB-6451
+  internal sample clock at 1 MHz and five samples per record, the two Channel 2
+  rising edges must be at least 5 us apart; use a larger margin on the sequence.
+  '
+tags:
+- hardware
+- esr
+- lmx
+- com12
+- pse
+- ai1
+- asg_master
+resources:
+  mw:
+    adapter: pycontrol_lmx
+    capabilities:
+    - microwave_source
+    port: COM12
+    baudrate: 921600
+    output_type: RFH
+    simulation: false
+    pycontrol_path: drivers/pycontrol
+  asg:
+    adapter: pycontrol_asg
+    capabilities:
+    - pulse_sequencer
+    - trigger_source
+    address: auto
+    simulation: false
+    pycontrol_path: drivers/pycontrol
+    voltage_level: 0
+    impedance: 0
+    sequence_file: configs/sequences/rabi.json
+  daq:
+    adapter: pycontrol_ni
+    capabilities:
+    - analog_input
+    - trigger_receiver
+    driver: sync
+    device: Dev2
+    simulation: false
+    pycontrol_path: drivers/pycontrol
+sync:
+  master: asg
+  triggers:
+  - source: asg.ch2
+    target: daq.PFI1
+    edge: rising
+    purpose: ai_retriggerable_start
+  order:
+    configure:
+    - mw
+    - daq
+    - asg
+    arm:
+    - daq
+    - asg
+    start:
+    - asg
+    read:
+    - daq
+setup:
+- call: mw.set_power
+  args:
+    power_dbm: 63
+- call: mw.output_on
+- call: asg.load_sequence
+  args:
+    sequence_file: configs/sequences/rabi.json
+- call: asg.compile_sequence
+procedure:
+- scan:
+    name: mw_freq_hz
+    values:
+      start: 3002000000.0
+      stop: 3012000000.0
+      points: 101
+    body:
+    - measurement:
+        name: esr_frequency_point
+        body:
+        - call: daq.configure_ai_external_trigger
+          args:
+            channels:
+            - ai1
+            # USB-6451 supports 1 MS/s per AI channel, not 10 MS/s.
+            sample_rate: 1000000
+            samples: 5
+            start_trigger: PFI1
+            # null means the NI onboard sample clock. Set a real terminal only
+            # when an external sample clock is physically connected and valid.
+            sample_clock: null
+            edge: rising
+            terminal_config: RSE
+            trigger_count: 2
+        - call: mw.set_frequency
+          args:
+            freq_hz: "${mw_freq_hz}"
+        - wait:
+            name: lmx_settle
+            duration_s: 0.01
+        - run:
+            name: asg_triggered_ai1
+            timeout_s: 5
+            steps:
+            - call: daq.arm
+            - call: asg.arm
+            - call: asg.start
+            - call: daq.read_analog_traces
+              args:
+                timeout: 5.0
+              save_as: fluorescence_traces
+analysis:
+  live:
+    enabled: true
+    execution: sync
+    fail_policy: fail
+    save_outputs: true
+  modules:
+  - name: two_trace_ratio
+    module: analysis_modules.two_trace_ratio
+    class: TwoTraceMeanRatio
+    inputs:
+    - fluorescence_traces
+    outputs:
+    - fluorescence_signal_mean
+    - fluorescence_reference_mean
+    - fluorescence_ratio
+    show: true
+    save: true
+    fail_policy: fail
+    args:
+      channel_index: 0
+      signal_record: 0
+      reference_record: 1
+      signal_sample_start: 1
+      signal_sample_stop: 5
+      reference_sample_start: 1
+      reference_sample_stop: 5
+      denominator_epsilon: 1.0e-12
+operator_parameters:
+- name: mw_power_level
+  label: LMX board amplitude level
+  source: setup.call[mw.set_power].args.power_dbm
+  widget: number
+- name: ai_sample_rate
+  label: AI sample rate
+  unit: Hz
+  source: procedure.call[daq.configure_ai_external_trigger].args.sample_rate
+  widget: number
+  min: 1
+- name: ai_samples
+  label: AI samples per trigger
+  source: procedure.call[daq.configure_ai_external_trigger].args.samples
+  widget: integer
+  min: 1
+- name: ai_start_trigger
+  label: AI start trigger
+  source: procedure.call[daq.configure_ai_external_trigger].args.start_trigger
+- name: ai_trigger_count
+  label: Traces per sequence
+  source: procedure.call[daq.configure_ai_external_trigger].args.trigger_count
+  widget: integer
+  min: 1
+- name: ai_sample_clock
+  label: AI sample clock source
+  source: procedure.call[daq.configure_ai_external_trigger].args.sample_clock
+  widget: text
+- name: ai_read_timeout
+  label: AI read timeout
+  unit: s
+  source: procedure.call[daq.read_analog_traces].args.timeout
+  widget: number
+  min: 0.1
+- name: signal_sample_start
+  label: Signal integration start
+  unit: sample
+  source: analysis.modules[two_trace_ratio].args.signal_sample_start
+  widget: integer
+  min: 0
+- name: signal_sample_stop
+  label: Signal integration stop
+  unit: sample
+  source: analysis.modules[two_trace_ratio].args.signal_sample_stop
+  widget: integer
+  min: 1
+- name: reference_sample_start
+  label: Reference integration start
+  unit: sample
+  source: analysis.modules[two_trace_ratio].args.reference_sample_start
+  widget: integer
+  min: 0
+- name: reference_sample_stop
+  label: Reference integration stop
+  unit: sample
+  source: analysis.modules[two_trace_ratio].args.reference_sample_stop
+  widget: integer
+  min: 1
+plot:
+- type: line
+  x: mw_freq_hz
+  y: fluorescence_ratio
+- type: line
+  x: mw_freq_hz
+  y: fluorescence_signal_mean
+- type: line
+  x: mw_freq_hz
+  y: fluorescence_reference_mean
+- type: trace
+  x: time_s
+  y: fluorescence_traces
+cleanup:
+- call: asg.stop
+- call: daq.stop
+- call: mw.output_off
+storage:
+  backends:
+  - zarr
