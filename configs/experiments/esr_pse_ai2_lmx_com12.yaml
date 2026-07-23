@@ -98,16 +98,6 @@ setup:
   - call: mw.set_power
     args: {power_dbm: 0}
   - call: mw.output_on
-  - call: daq.configure_ai_external_trigger
-    args:
-      channels: [ai1]
-      sample_rate: 1000000
-      samples: 1000
-      start_trigger: PFI1
-      sample_clock: null
-      edge: rising
-      terminal_config: DIFF
-      trigger_count: 2
 
 procedure:
   - sequence_sweep:
@@ -123,6 +113,19 @@ procedure:
                     - measurement:
                         name: esr_frequency_point
                         body:
+                          # A fresh finite/retriggerable task is required for
+                          # every frequency point after the previous two-record
+                          # acquisition has completed.
+                          - call: daq.configure_ai_external_trigger
+                            args:
+                              channels: [ai1]
+                              sample_rate: 1000000
+                              samples: 1000
+                              start_trigger: PFI1
+                              sample_clock: null
+                              edge: rising
+                              terminal_config: DIFF
+                              trigger_count: 2
                           - call: mw.set_frequency
                             args: {freq_hz: "${mw_freq_hz}"}
                           - wait: {name: lmx_settle, duration_s: 0.01}
@@ -161,9 +164,10 @@ analysis:
 
 operator_parameters:
   - {name: mw_power_level, label: LMX board amplitude level, source: "setup.call[mw.set_power].args.power_dbm", widget: number}
-  - {name: ai_sample_rate, label: AI sample rate, unit: Hz, source: "setup.call[daq.configure_ai_external_trigger].args.sample_rate", widget: number, min: 1}
-  - {name: ai_samples, label: AI samples per trigger, source: "setup.call[daq.configure_ai_external_trigger].args.samples", widget: integer, min: 1}
-  - {name: ai_start_trigger, label: AI start trigger, source: "setup.call[daq.configure_ai_external_trigger].args.start_trigger"}
+  - {name: ai_sample_rate, label: AI sample rate, unit: Hz, source: "procedure.call[daq.configure_ai_external_trigger].args.sample_rate", widget: number, min: 1}
+  - {name: ai_samples, label: AI samples per trigger, source: "procedure.call[daq.configure_ai_external_trigger].args.samples", widget: integer, min: 1}
+  - {name: ai_start_trigger, label: AI start trigger, source: "procedure.call[daq.configure_ai_external_trigger].args.start_trigger"}
+  - {name: ai_trigger_count, label: Traces per sequence, source: "procedure.call[daq.configure_ai_external_trigger].args.trigger_count", widget: integer, min: 1}
   - {name: ai_read_timeout, label: AI read timeout, unit: s, source: "procedure.call[daq.read_analog_traces].args.timeout", widget: number, min: 0.1}
   - {name: signal_sample_start, label: Signal integration start, unit: sample, source: "analysis.modules[two_trace_ratio].args.signal_sample_start", widget: integer, min: 0}
   - {name: signal_sample_stop, label: Signal integration stop, unit: sample, source: "analysis.modules[two_trace_ratio].args.signal_sample_stop", widget: integer, min: 1}

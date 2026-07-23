@@ -15,8 +15,12 @@ def test_esr_lmx_com12_declares_outer_sequence_and_inner_frequency_scan() -> Non
     assert config["resources"]["mw"]["output_type"] == "RFH"
     assert config["resources"]["daq"]["device"] == "Dev2"
     assert config["sync"]["triggers"][0]["target"] == "daq.PFI1"
-    assert config["setup"][2]["args"]["channels"] == ["ai1"]
     assert config["sequence_plans"]["esr_readout"]["template"] == "configs/sequences/rabi.json"
     outer = config["procedure"][0]["sequence_sweep"]
     assert outer["plan"] == "esr_readout"
-    assert outer["body"][0]["measurement"]["body"][0]["scan"]["name"] == "mw_freq_hz"
+    scan = outer["body"][0]["measurement"]["body"][0]["scan"]
+    assert scan["name"] == "mw_freq_hz"
+    point_body = scan["body"][0]["measurement"]["body"]
+    configure = next(step for step in point_body if step.get("call") == "daq.configure_ai_external_trigger")
+    assert configure["args"]["channels"] == ["ai1"]
+    assert configure["args"]["trigger_count"] == 2
