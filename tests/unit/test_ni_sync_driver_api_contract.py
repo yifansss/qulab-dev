@@ -5,6 +5,8 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 PYCONTROL = ROOT / "drivers" / "pycontrol"
@@ -240,6 +242,28 @@ def test_ai_retriggerable_returns_one_record_per_trigger(monkeypatch) -> None:
         assert result["data"]["time_axis_s"] == [0.0, 1e-06, 2e-06]
         assert "ai" not in driver._tasks
         assert driver._armed is False and driver._started is False
+    finally:
+        _cleanup_pycontrol_imports()
+
+
+def test_retriggerable_read_failure_reports_expected_record_diagnostics(monkeypatch) -> None:
+    try:
+        driver_cls = _load_driver(monkeypatch)
+        driver = driver_cls(verbose=False)
+        driver.connect("Dev2")
+        driver.configure_ai_external_trigger(
+            channels=["ai1"],
+            sample_rate=1_000_000,
+            samples=5,
+            start_trigger="PFI1",
+            trigger_count=2,
+        )
+        task = driver._tasks["ai"]
+        task.in_stream = types.SimpleNamespace(avail_samp_per_chan=5)
+        task.read = lambda **kwargs: (_ for _ in ()).throw(RuntimeError("DAQmx -200284"))
+
+        with pytest.raises(RuntimeError, match=r"expected 2 records x 5 samples.*available 5.*PFI1"):
+            driver.read_analog_trace(timeout=5)
     finally:
         _cleanup_pycontrol_imports()
 
