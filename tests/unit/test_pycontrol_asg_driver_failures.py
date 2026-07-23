@@ -4,6 +4,8 @@ import importlib
 import sys
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 PYCONTROL = ROOT / "drivers" / "pycontrol"
@@ -34,4 +36,5 @@ def test_output_channel_configuration_propagates_register_failure(monkeypatch) -
     driver._check_connection = lambda: None
     driver.set_param_int = lambda path, value: path != "/Device/C1/Output"
 
-    assert driver.configure_output_channels(channel_limit=1) is False
+    with pytest.raises(RuntimeError, match=r"/Device/C1/Output"):
+        driver.configure_output_channels(channel_limit=1)
