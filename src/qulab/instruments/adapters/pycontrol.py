@@ -251,9 +251,14 @@ class PycontrolASGAdapter(_PycontrolAdapterBase):
         self.output_channels: list[int] = []
 
     def connect(self) -> None:
-        driver_cls = _load_driver(self.config, "PulseGenerator.driver", "ASG24100Driver")
         try:
-            self._driver = driver_cls(verbose=_bool_config(self.config, "verbose", False), force_simulation=False)
+            use_proxy = _bool_config(self.config, "use_proxy", True)
+            if use_proxy:
+                driver_cls = _load_driver(self.config, "PulseGenerator.asg_process", "ASGProxy")
+                self._driver = driver_cls()
+            else:
+                driver_cls = _load_driver(self.config, "PulseGenerator.driver", "ASG24100Driver")
+                self._driver = driver_cls(verbose=_bool_config(self.config, "verbose", False), force_simulation=False)
             address = None if self.address in (None, "", "auto") else str(self.address)
             _require_success(self._driver.connect(address), "ASG24100.connect")
             self.connected = True
@@ -302,7 +307,7 @@ class PycontrolASGAdapter(_PycontrolAdapterBase):
     def arm(self) -> bool:
         self._ensure_connected()
         self.compile_sequence()
-        if self.compiled_code and hasattr(self._driver, "upload_and_run"):
+        if self.compiled_code:
             self.output_channels = sorted(
                 {int(channel) for channel in re.findall(r"ASG_OUT\s*\[\s*(\d+)\s*\]", self.compiled_code)}
             )
@@ -317,15 +322,22 @@ class PycontrolASGAdapter(_PycontrolAdapterBase):
                     ),
                     "ASG24100.configure_output_channels",
                 )
-            _require_success(
-                self._driver.upload_and_run(
-                    self.compiled_code,
-                    loop=int(self.config.get("loop", 1)),
-                    arm_only=True,
-                    configure_mode=_bool_config(self.config, "configure_playback_mode", False),
-                ),
-                "ASG24100.upload_and_run(arm_only)",
-            )
+            upload_and_run = getattr(self._driver, "upload_and_run", None)
+            if callable(upload_and_run):
+                _require_success(
+                    upload_and_run(
+                        self.compiled_code,
+                        loop=int(self.config.get("loop", 1)),
+                        arm_only=True,
+                        configure_mode=_bool_config(self.config, "configure_playback_mode", False),
+                    ),
+                    "ASG24100.upload_and_run(arm_only)",
+                )
+            else:
+                _require_success(self._driver.upload_waveform(self.compiled_code), "ASG24100.upload_waveform")
+                set_loop = getattr(self._driver, "set_loop", None)
+                if callable(set_loop):
+                    _require_success(set_loop(int(self.config.get("loop", 1))), "ASG24100.set_loop")
         self.armed = True
         return True
 

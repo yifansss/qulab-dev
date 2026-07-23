@@ -18,7 +18,7 @@ def test_editor_json_compiles_microseconds_to_asg_nanosecond_script() -> None:
         _source({"rise": 1, "start_time": 5.0, "time_on": 20.0, "d": 10.0, "pbn": 0})
     )
 
-    assert script == "w1 = Seq_Gen(L,5000,H,20000,L,1)\ns1 = ASG_SEQ([w1(1)])\nASG_OUT[1] = s1"
+    assert script == "w1 = Seq_Gen(L,5000,H,20000,L,4)\ns1 = ASG_SEQ([w1(1)])\nASG_OUT[1] = s1"
 
 
 def test_repeated_pulse_expands_using_spacing() -> None:
@@ -26,7 +26,7 @@ def test_repeated_pulse_expands_using_spacing() -> None:
         _source({"rise": 2, "start_time": 1.0, "time_on": 0.1, "d": 0.5, "pbn": 0})
     )
 
-    assert "Seq_Gen(L,1000,H,100,L,400,H,100,L,1)" in script
+    assert "Seq_Gen(L,1000,H,100,L,400,H,100,L,4)" in script
 
 
 def test_empty_and_overlapping_sequences_fail_before_hardware_upload() -> None:
@@ -81,3 +81,25 @@ def test_asg_stop_uses_driver_safe_stop_for_active_channels() -> None:
 
     assert adapter.stop() is False
     assert calls == [[1, 2]]
+
+
+def test_asg_arm_supports_proxy_style_upload_then_start_driver() -> None:
+    calls = []
+
+    class ProxyDriver:
+        def upload_waveform(self, code):
+            calls.append(("upload", code))
+            return True
+
+        def set_loop(self, loop):
+            calls.append(("loop", loop))
+            return True
+
+    adapter = PycontrolASGAdapter("asg", {})
+    adapter.connected = True
+    adapter._driver = ProxyDriver()
+    adapter.compiled_code = _source({"rise": 1, "start_time": 5.0, "time_on": 20.0, "d": 10.0})
+
+    assert adapter.arm() is True
+    assert calls[0][0] == "upload"
+    assert calls[1] == ("loop", 1)

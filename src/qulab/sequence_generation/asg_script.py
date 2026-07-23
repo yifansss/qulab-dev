@@ -91,7 +91,10 @@ def _compile_channel_segments(pulses: list[dict[str, Any]], channel: int) -> lis
             segments.extend(("L", str(start - cursor)))
         segments.extend(("H", str(end - start)))
         cursor = end
-    segments.extend(("L", "1"))
+    # ASG basic waveforms must occupy an integral number of 4 ns words.  The
+    # vendor GUI pads this automatically; make the uploaded DSL explicit.
+    trailing_low_ns = 1 + (-(cursor + 1) % 4)
+    segments.extend(("L", str(trailing_low_ns)))
     return segments
 
 
