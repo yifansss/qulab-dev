@@ -80,3 +80,25 @@ def test_pycontrol_asg_proxy_receives_project_driver_root(monkeypatch, tmp_path:
     adapter.connect()
 
     assert captured == {"package_path": str(tmp_path), "address": None}
+
+
+def test_pycontrol_asg_legacy_proxy_keeps_project_driver_root_for_spawn(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    class LegacyProxy:
+        def __init__(self) -> None:
+            captured["path_at_init"] = str(tmp_path) in sys.path
+
+        def connect(self, address):
+            return True
+
+        def disconnect(self):
+            captured["disconnected"] = True
+
+    monkeypatch.setattr("qulab.instruments.adapters.pycontrol._load_driver", lambda *_args: LegacyProxy)
+    adapter = PycontrolASGAdapter("asg", {"pycontrol_path": str(tmp_path), "address": "auto"})
+
+    adapter.connect()
+    assert captured["path_at_init"] is True
+    adapter.disconnect()
+    assert str(tmp_path) not in sys.path

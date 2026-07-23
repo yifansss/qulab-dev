@@ -249,6 +249,7 @@ class PycontrolASGAdapter(_PycontrolAdapterBase):
         self.running = False
         self.compiled_code: str | None = None
         self.output_channels: list[int] = []
+        self._legacy_proxy_import_path: str | None = None
 
     def connect(self) -> None:
         try:
@@ -256,7 +257,19 @@ class PycontrolASGAdapter(_PycontrolAdapterBase):
             if use_proxy:
                 driver_cls = _load_driver(self.config, "PulseGenerator.asg_process", "ASGProxy")
                 pycontrol_path = _resolve_pycontrol_path(self.config)
-                self._driver = driver_cls(package_path=None if pycontrol_path is None else str(pycontrol_path))
+                package_path = None if pycontrol_path is None else str(pycontrol_path)
+                try:
+                    self._driver = driver_cls(package_path=package_path)
+                except TypeError as exc:
+                    if "package_path" not in str(exc):
+                        raise
+                    # pycontrol before 6baf3a9 has no package_path argument.
+                    # Keep its project root on sys.path for Windows spawn so the
+                    # worker imports the repository driver rather than pip's copy.
+                    if package_path and package_path not in sys.path:
+                        sys.path.insert(0, package_path)
+                        self._legacy_proxy_import_path = package_path
+                    self._driver = driver_cls()
             else:
                 driver_cls = _load_driver(self.config, "PulseGenerator.driver", "ASG24100Driver")
                 self._driver = driver_cls(verbose=_bool_config(self.config, "verbose", False), force_simulation=False)
@@ -365,7 +378,15 @@ class PycontrolASGAdapter(_PycontrolAdapterBase):
             self.stop()
         except Exception:
             pass
-        super().disconnect()
+        try:
+            super().disconnect()
+        finally:
+            if self._legacy_proxy_import_path:
+                try:
+                    sys.path.remove(self._legacy_proxy_import_path)
+                except ValueError:
+                    pass
+                self._legacy_proxy_import_path = None
 
     def sequence_snapshot(self) -> dict[str, Any]:
         return {
