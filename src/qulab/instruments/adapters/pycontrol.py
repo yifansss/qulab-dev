@@ -317,7 +317,15 @@ class PycontrolASGAdapter(_PycontrolAdapterBase):
                     ),
                     "ASG24100.configure_output_channels",
                 )
-            _require_success(self._driver.upload_and_run(self.compiled_code, loop=int(self.config.get("loop", 1)), arm_only=True), "ASG24100.upload_and_run(arm_only)")
+            _require_success(
+                self._driver.upload_and_run(
+                    self.compiled_code,
+                    loop=int(self.config.get("loop", 1)),
+                    arm_only=True,
+                    configure_mode=_bool_config(self.config, "configure_playback_mode", False),
+                ),
+                "ASG24100.upload_and_run(arm_only)",
+            )
         self.armed = True
         return True
 

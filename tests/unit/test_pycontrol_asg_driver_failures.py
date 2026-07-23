@@ -22,11 +22,25 @@ def test_upload_and_run_propagates_upload_failure(monkeypatch) -> None:
     driver = object.__new__(cls)
     driver._is_sim = False
     driver._check_connection = lambda: None
-    driver.configure_free_mode = lambda: True
+    driver.configure_free_mode = lambda: (_ for _ in ()).throw(AssertionError("mode must not be configured"))
     driver.upload_waveform = lambda code: False
     driver.set_loop = lambda loop: (_ for _ in ()).throw(AssertionError("loop must not be set"))
 
-    assert driver.upload_and_run("ASG_OUT[1] = s1", arm_only=True) is False
+    assert driver.upload_and_run("ASG_OUT[1] = s1", arm_only=True, configure_mode=False) is False
+
+
+def test_upload_and_run_can_explicitly_configure_playback_mode(monkeypatch) -> None:
+    cls = _driver_class(monkeypatch)
+    driver = object.__new__(cls)
+    driver._is_sim = False
+    driver._check_connection = lambda: None
+    calls = []
+    driver.configure_free_mode = lambda: calls.append("mode") or True
+    driver.upload_waveform = lambda code: calls.append("upload") or True
+    driver.set_loop = lambda loop: calls.append(("loop", loop)) or True
+
+    assert driver.upload_and_run("ASG_OUT[1] = s1", loop=1, arm_only=True, configure_mode=True) is True
+    assert calls == ["mode", "upload", ("loop", 1)]
 
 
 def test_output_channel_configuration_propagates_register_failure(monkeypatch) -> None:
