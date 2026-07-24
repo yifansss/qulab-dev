@@ -216,3 +216,40 @@ def test_asg_reuses_resident_waveform_and_only_resets_playback_between_points() 
     adapter.running = True
     assert adapter.arm() is True
     assert calls == ["mode", "outputs", "upload", "rearm"]
+
+
+def test_asg_reuploads_when_a_sequence_sweep_changes_compiled_code() -> None:
+    calls = []
+
+    class Driver:
+        def configure_free_mode(self, **kwargs):
+            calls.append("mode")
+            return True
+
+        def configure_output_channels(self, **kwargs):
+            calls.append("outputs")
+            return True
+
+        def upload_and_run(self, code, **kwargs):
+            calls.append(("upload", code))
+            return True
+
+    adapter = PycontrolASGAdapter("asg", {})
+    adapter.connected = True
+    adapter._driver = Driver()
+    adapter.compiled_code = _source(
+        {"rise": 1, "start_time": 5.0, "time_on": 20.0, "d": 10.0, "pbn": 0}
+    )
+    assert adapter.arm() is True
+
+    # This models a bundle-selected sweep entry: load_sequence installs fresh
+    # JSON, compile_sequence produces new DSL, and arm must upload it.
+    adapter.compiled_code = _source(
+        {"rise": 1, "start_time": 6.0, "time_on": 20.0, "d": 10.0, "pbn": 0}
+    )
+    assert adapter.arm() is True
+
+    assert [call[0] if isinstance(call, tuple) else call for call in calls] == [
+        "mode", "outputs", "upload", "mode", "outputs", "upload",
+    ]
+    assert calls[2][1] != calls[5][1]

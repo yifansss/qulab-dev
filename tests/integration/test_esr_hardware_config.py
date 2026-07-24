@@ -30,6 +30,9 @@ def test_esr_frequency_scan_is_bound_to_lmx_and_uses_supported_ai_timing() -> No
     assert asg["trigger"] == "internal"
     assert asg["loop"] == 1
     assert parsed.procedure.metadata["storage"]["backends"] == ["zarr"]
+    analysis = parsed.analysis_plan.modules[0]
+    assert analysis.args["signal_record"] == 1
+    assert analysis.args["reference_record"] == 0
 
 
 def test_esr_rabi_template_has_two_channel_1_ai_trigger_edges_with_safe_spacing() -> None:

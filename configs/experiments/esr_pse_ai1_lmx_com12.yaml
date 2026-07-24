@@ -83,7 +83,7 @@ procedure:
     name: mw_freq_hz
     values:
       start: 2982000000.0
-      stop: 2987000000.0
+      stop: 2997000000.0
       points: 101
     body:
     - measurement:
@@ -138,8 +138,11 @@ analysis:
     fail_policy: fail
     args:
       channel_index: 0
-      signal_record: 0
-      reference_record: 1
+      # ASG ch1 rises at 360 us and 420 us, so NI returns records [0, 1]
+      # in that order.  The first is the reference window; the second is
+      # the microwave signal window for this LMX/AI1 wiring.
+      signal_record: 1
+      reference_record: 0
       signal_sample_start: 1
       signal_sample_stop: 5
       reference_sample_start: 1
