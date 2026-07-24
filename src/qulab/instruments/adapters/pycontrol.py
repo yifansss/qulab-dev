@@ -111,6 +111,15 @@ def _require_success(result: Any, action: str) -> None:
         raise InstrumentConnectionError(f"pycontrol action failed: {action}")
 
 
+def _require_acknowledged(result: Any, action: str) -> None:
+    """Require an explicit hardware acknowledgement for output-affecting calls."""
+
+    if result is not True:
+        raise InstrumentConnectionError(
+            f"pycontrol action was not explicitly acknowledged: {action} returned {result!r}"
+        )
+
+
 class _PycontrolAdapterBase(InstrumentAdapter):
     adapter_name = "pycontrol"
     vendor = "pycontrol"
@@ -249,6 +258,7 @@ class PycontrolASGAdapter(_PycontrolAdapterBase):
         self.running = False
         self.compiled_code: str | None = None
         self.output_channels: list[int] = []
+        self.last_start_status: dict[str, Any] | None = None
         self._legacy_proxy_import_path: str | None = None
 
     def connect(self) -> None:
@@ -274,7 +284,7 @@ class PycontrolASGAdapter(_PycontrolAdapterBase):
                 driver_cls = _load_driver(self.config, "PulseGenerator.driver", "ASG24100Driver")
                 self._driver = driver_cls(verbose=_bool_config(self.config, "verbose", False), force_simulation=False)
             address = None if self.address in (None, "", "auto") else str(self.address)
-            _require_success(self._driver.connect(address), "ASG24100.connect")
+            _require_acknowledged(self._driver.connect(address), "ASG24100.connect")
             self.connected = True
         except Exception as exc:  # noqa: BLE001
             self._last_error = str(exc)
@@ -328,7 +338,7 @@ class PycontrolASGAdapter(_PycontrolAdapterBase):
             configure_mode = _bool_config(self.config, "configure_playback_mode", True)
             configure_free_mode = getattr(self._driver, "configure_free_mode", None)
             if configure_mode and callable(configure_free_mode):
-                _require_success(
+                _require_acknowledged(
                     configure_free_mode(
                         play_mode=int(self.config.get("play_mode", 1)),
                         trigger=str(self.config.get("trigger", "internal")),
@@ -339,18 +349,19 @@ class PycontrolASGAdapter(_PycontrolAdapterBase):
                 )
             configure_outputs = getattr(self._driver, "configure_output_channels", None)
             if self.output_channels and callable(configure_outputs):
-                _require_success(
+                _require_acknowledged(
                     configure_outputs(
                         channel_limit=max(self.output_channels),
                         voltage_level=int(self.config.get("voltage_level", 0)),
                         impedance=int(self.config.get("impedance", 0)),
                         configure_childcards=_bool_config(self.config, "configure_childcards", False),
+                        channels=self.output_channels,
                     ),
                     "ASG24100.configure_output_channels",
                 )
             upload_and_run = getattr(self._driver, "upload_and_run", None)
             if callable(upload_and_run):
-                _require_success(
+                _require_acknowledged(
                     upload_and_run(
                         self.compiled_code,
                         loop=int(self.config.get("loop", 1)),
@@ -362,14 +373,24 @@ class PycontrolASGAdapter(_PycontrolAdapterBase):
             else:
                 set_loop = getattr(self._driver, "set_loop", None)
                 if callable(set_loop):
-                    _require_success(set_loop(int(self.config.get("loop", 1))), "ASG24100.set_loop")
-                _require_success(self._driver.upload_waveform(self.compiled_code), "ASG24100.upload_waveform")
+                    _require_acknowledged(set_loop(int(self.config.get("loop", 1))), "ASG24100.set_loop")
+                _require_acknowledged(self._driver.upload_waveform(self.compiled_code), "ASG24100.upload_waveform")
         self.armed = True
         return True
 
     def start(self) -> bool:
         self._ensure_connected()
-        _require_success(self._driver.start(), "ASG24100.start")
+        _require_acknowledged(self._driver.start(), "ASG24100.start")
+        status_method = getattr(self._driver, "status", None)
+        if callable(status_method):
+            status = status_method()
+            if not isinstance(status, dict) or status.get("playback_state") not in {0, 1}:
+                raise RuntimeError(f"ASG start returned an invalid hardware status: {status!r}")
+            # A short one-shot waveform may already have returned to 0 by the
+            # time status is read.  The start command itself is authoritative;
+            # retain the readback for diagnostics without misclassifying a
+            # completed one-shot as a failed start.
+            self.last_start_status = dict(status)
         self.running = True
         self.armed = False
         return True
@@ -378,9 +399,9 @@ class PycontrolASGAdapter(_PycontrolAdapterBase):
         if self._driver is not None and self.connected:
             safe_stop = getattr(self._driver, "safe_stop", None)
             if callable(safe_stop):
-                _require_success(safe_stop(self.output_channels or None), "ASG24100.safe_stop")
+                _require_acknowledged(safe_stop(self.output_channels or None), "ASG24100.safe_stop")
             else:
-                _require_success(self._driver.stop(), "ASG24100.stop")
+                _require_acknowledged(self._driver.stop(), "ASG24100.stop")
         self.running = False
         self.armed = False
         return False
@@ -427,6 +448,7 @@ class PycontrolASGAdapter(_PycontrolAdapterBase):
             "impedance": int(self.config.get("impedance", 0)),
             "armed": self.armed,
             "running": self.running,
+            "last_start_status": self.last_start_status,
             "status": status,
         }
 

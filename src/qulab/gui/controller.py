@@ -23,6 +23,7 @@ from qulab.sequence_generation.providers.asg_model import build_target_selector,
 from qulab.storage import DatasetModel, HistoricalRunWorkspace, RunReader, RunStore, SliceController
 from qulab.storage.run_reader import BackendPreference
 from qulab.storage.slicing import HeatmapData, LineData, TraceData
+from qulab.paths import resolve_project_path
 from .workflow_model import (
     Path as WorkflowPath,
     add_step,
@@ -302,6 +303,7 @@ class OperatorController:
             analysis_plan=getattr(parsed, "analysis_plan", None),
         )
         store.open()
+        _bind_frozen_sequence_artifacts(parsed, store)
         bus.subscribe(store.handle_event)
         executor = ExperimentExecutor(parsed.procedure, parsed.context, bus, dry_run=not connect_hardware)
         with self._run_lock:
@@ -971,3 +973,44 @@ def _single_sequence_snapshot(config: dict[str, Any] | None) -> dict[str, Any] |
         if isinstance(resource, dict) and (resource.get("sequence_file") or resource.get("sequence_path")):
             return {"resource": name, "sequence_file": resource.get("sequence_file") or resource.get("sequence_path")}
     return None
+
+
+def _bind_frozen_sequence_artifacts(parsed: ParsedExperiment, store: RunStore) -> None:
+    """Make hardware load the exact sequence bytes archived for this run."""
+
+    writer = store.metadata_writer
+    if writer is None:
+        raise RuntimeError("RunStore metadata is unavailable while binding sequence artifacts")
+    snapshots = writer.metadata.get("sequence_snapshots", [])
+    bindings: dict[tuple[str, str], str] = {}
+    for snapshot in snapshots:
+        if not isinstance(snapshot, dict) or not snapshot.get("artifact_path"):
+            continue
+        source = resolve_project_path(snapshot.get("source_path"))
+        if source is None:
+            continue
+        artifact = (store.run_path / str(snapshot["artifact_path"])).resolve()
+        bindings[(str(snapshot.get("resource") or ""), str(source.resolve()))] = str(artifact)
+
+    def walk(steps: list[Any]) -> None:
+        for step in steps:
+            action = getattr(step, "action", None)
+            if isinstance(action, str) and action.endswith(".load_sequence"):
+                resource_name = action.split(".", 1)[0]
+                for key in ("sequence_file", "path"):
+                    raw = getattr(step, "kwargs", {}).get(key)
+                    source = resolve_project_path(raw) if raw else None
+                    frozen = bindings.get((resource_name, str(source.resolve()))) if source is not None else None
+                    if frozen:
+                        step.kwargs[key] = frozen
+                        resource = parsed.context.resources.get(resource_name)
+                        config = getattr(resource, "config", None)
+                        if isinstance(config, dict):
+                            config["sequence_file"] = frozen
+                        elif resource is not None and hasattr(resource, "sequence_file"):
+                            resource.sequence_file = frozen
+            body = getattr(step, "body", None)
+            if isinstance(body, list):
+                walk(body)
+
+    walk([*parsed.procedure.setup, *parsed.procedure.body, *parsed.procedure.cleanup])

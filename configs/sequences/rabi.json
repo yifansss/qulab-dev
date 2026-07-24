@@ -89,5 +89,21 @@
       }
     ],
     "pbn": 3
+  },
+  {
+    "channel_name": "Channel 5",
+    "delay_off": 0.0,
+    "pbn": 7,
+    "pulses": [
+      {
+        "rise": 1,
+        "time_on": 10.0,
+        "d": 10.0,
+        "type": "notype",
+        "phas": 0.0,
+        "pbn": 7,
+        "start_time": 330.0
+      }
+    ]
   }
 ]

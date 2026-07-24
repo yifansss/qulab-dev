@@ -1,3 +1,5 @@
+import time
+
 import pytest
 
 from qulab.core import (
@@ -7,6 +9,7 @@ from qulab.core import (
     EventBus,
     ExperimentContext,
     ExperimentExecutor,
+    ExperimentTimeoutError,
     MeasurementStep,
     P,
     Procedure,
@@ -176,6 +179,46 @@ def test_hardware_like_resource_can_run_after_explicit_connection() -> None:
     data_event = next(event for event in bus.events if event.type == "DataPoint")
     assert data_event.data == {"result": "ok"}
     assert resource.connected is False
+
+
+def test_output_action_emits_post_action_instrument_snapshot() -> None:
+    class Pulse:
+        def __init__(self):
+            self.running = False
+
+        def start(self):
+            self.running = True
+            return True
+
+        def snapshot(self):
+            return {"running": self.running}
+
+    bus = EventBus()
+    procedure = Procedure(name="snapshot", body=[ActionStep(name="start", action="asg.start")])
+    ExperimentExecutor(
+        procedure,
+        context=ExperimentContext(resources={"asg": Pulse()}),
+        event_bus=bus,
+    ).run()
+
+    snapshot = next(event for event in bus.events if event.type == "InstrumentSnapshot")
+    assert snapshot.resource == "asg"
+    assert snapshot.action == "asg.start"
+    assert snapshot.snapshot == {"running": True}
+
+
+def test_run_step_enforces_cooperative_timeout() -> None:
+    procedure = Procedure(
+        name="timeout",
+        body=[RunStep(
+            name="slow",
+            timeout_s=0.001,
+            body=[ActionStep(name="block", action=lambda: time.sleep(0.02))],
+        )],
+    )
+
+    with pytest.raises(ExperimentTimeoutError, match="slow"):
+        ExperimentExecutor(procedure).run()
 
 
 def test_error_event_is_emitted_and_cleanup_still_runs() -> None:

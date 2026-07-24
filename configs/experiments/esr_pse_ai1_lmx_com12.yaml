@@ -1,11 +1,10 @@
 schema_version: 1
 name: esr_pse_ai1_lmx_com12
-description: 'Hardware ESR sweep using an LMX2572 on COM12. The outer frequency
-  scan is bound directly to mw.set_frequency. For each frequency, ASG Channel 1
-  emits two PFI1 start edges and NI records two finite AI1 traces. With the USB-6451
-  internal sample clock at 1 MHz and five samples per record, the two Channel 1
-  rising edges must be at least 5 us apart; use a larger margin on the sequence.
-  '
+description: 'Hardware ESR sweep using an LMX2572 on COM12. The outer frequency scan
+  is bound directly to mw.set_frequency. For each frequency, ASG Channel 1 emits two
+  PFI1 start edges and NI records two finite AI1 traces. With the USB-6451 internal
+  sample clock at 1 MHz and five samples per record, the two Channel 1 rising edges
+  must be at least 5 us apart; use a larger margin on the sequence. '
 tags:
 - hardware
 - esr
@@ -40,7 +39,7 @@ resources:
     trigger_edge: rising
     clock: internal
     loop: 1
-    configure_childcards: false
+    configure_childcards: true
     sequence_file: configs/sequences/rabi.json
   daq:
     adapter: pycontrol_ni
@@ -83,8 +82,8 @@ procedure:
 - scan:
     name: mw_freq_hz
     values:
-      start: 3002000000.0
-      stop: 3012000000.0
+      start: 2982000000.0
+      stop: 2987000000.0
       points: 101
     body:
     - measurement:
@@ -94,19 +93,16 @@ procedure:
           args:
             channels:
             - ai1
-            # USB-6451 supports 1 MS/s per AI channel, not 10 MS/s.
             sample_rate: 1000000
             samples: 5
             start_trigger: PFI1
-            # null means the NI onboard sample clock. Set a real terminal only
-            # when an external sample clock is physically connected and valid.
             sample_clock: null
             edge: rising
             terminal_config: RSE
             trigger_count: 2
         - call: mw.set_frequency
           args:
-            freq_hz: "${mw_freq_hz}"
+            freq_hz: ${mw_freq_hz}
         - wait:
             name: lmx_settle
             duration_s: 0.01
@@ -129,7 +125,7 @@ analysis:
     save_outputs: true
   modules:
   - name: two_trace_ratio
-    module: analysis_modules.two_trace_ratio
+    module: analysis_modules/two_trace_ratio.py
     class: TwoTraceMeanRatio
     inputs:
     - fluorescence_traces

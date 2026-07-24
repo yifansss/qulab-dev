@@ -82,7 +82,24 @@ class TwoTraceMeanRatio:
         record = records[record_index]
         if not isinstance(record, (list, tuple)) or self.channel_index >= len(record):
             raise ValueError(f"missing channel {self.channel_index} in fluorescence record {record_index}")
-        trace = [float(value) for value in record[self.channel_index]]
+        raw_trace = record[self.channel_index]
+        # Some DAQ/result adapters historically wrapped a single-channel trace
+        # in one additional singleton dimension.  Accept that unambiguous
+        # representation, but reject genuinely nested/non-numeric samples with
+        # a diagnostic that identifies the offending record and channel.
+        while (
+            isinstance(raw_trace, (list, tuple))
+            and len(raw_trace) == 1
+            and isinstance(raw_trace[0], (list, tuple))
+        ):
+            raw_trace = raw_trace[0]
+        try:
+            trace = [float(value) for value in raw_trace]
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"fluorescence record {record_index} channel {self.channel_index} "
+                "must be a one-dimensional numeric trace"
+            ) from exc
         if stop > len(trace):
             raise ValueError(
                 f"sample window {start}:{stop} exceeds a {len(trace)}-sample record"

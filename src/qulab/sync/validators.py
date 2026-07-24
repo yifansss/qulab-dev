@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
-from qulab.core import AverageStep, ExperimentContext, Procedure, RunStep, ScanStep, Step
+from qulab.core import ActionStep, AverageStep, ExperimentContext, Procedure, RunStep, ScanStep, Step
 
 from .trigger_plan import SyncPlan
 
@@ -55,6 +55,7 @@ class SyncValidator:
                 )
         else:
             self._validate_plan(sync_plan, resources, issues)
+            self._validate_procedure_order(sync_plan, procedure, issues)
 
         for step in _walk_steps([*procedure.setup, *procedure.body, *procedure.cleanup]):
             if isinstance(step, ScanStep) and len(step.values) == 0:
@@ -160,7 +161,46 @@ class SyncValidator:
                         )
                     )
 
+    def _validate_procedure_order(
+        self,
+        sync_plan: SyncPlan,
+        procedure: Procedure,
+        issues: list[SyncValidationIssue],
+    ) -> None:
+        """Ensure executable run blocks do not contradict declarative sync order."""
 
+        if sync_plan.order is None:
+            return
+        declared = {
+            "arm": sync_plan.order.arm,
+            "start": sync_plan.order.start,
+            "read": sync_plan.order.read,
+        }
+        for run in (step for step in _walk_steps(procedure.body) if isinstance(step, RunStep)):
+            phase_resources: dict[str, list[str]] = {"arm": [], "start": [], "read": []}
+            for step in _walk_steps(run.body):
+                if not isinstance(step, ActionStep) or not isinstance(step.action, str) or "." not in step.action:
+                    continue
+                resource, method = step.action.split(".", 1)
+                phase = (
+                    "arm" if method == "arm"
+                    else "start" if method in {"start", "play"}
+                    else "read" if method == "read" or method.startswith("read_")
+                    else None
+                )
+                if phase is not None and resource not in phase_resources[phase]:
+                    phase_resources[phase].append(resource)
+            for phase, actual in phase_resources.items():
+                expected = [name for name in declared[phase] if name in actual]
+                if len(actual) > 1 and actual != expected:
+                    issues.append(
+                        SyncValidationIssue(
+                            "error",
+                            "procedure_sync_order_mismatch",
+                            f"Run '{run.name}' executes {phase} order {actual}, "
+                            f"but sync.order.{phase} declares {declared[phase]}",
+                        )
+                    )
 def _walk_steps(steps: Iterable[Step]) -> Iterable[Step]:
     for step in steps:
         yield step

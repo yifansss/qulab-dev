@@ -47,6 +47,24 @@ def test_fluorescence_ratio_uses_two_independent_ai2_records() -> None:
     assert result.data["fluorescence_ratio"] == pytest.approx(2.0)
 
 
+def test_fluorescence_ratio_accepts_legacy_singleton_trace_wrapper() -> None:
+    module = TwoTraceMeanRatio()
+    module.setup({"signal_sample_stop": 2, "reference_sample_stop": 2}, {})
+
+    result = module.process_point(
+        ComputePoint(
+            "p1",
+            {},
+            {"fluorescence_traces": [[[[2.0, 4.0]]], [[[1.0, 2.0]]]]},
+            {},
+            "",
+        )
+    )
+
+    assert result.data["fluorescence_signal_mean"] == pytest.approx(3.0)
+    assert result.data["fluorescence_reference_mean"] == pytest.approx(1.5)
+
+
 def test_rabi_operator_parameters_resolve_inside_sequence_sweep() -> None:
     config = load_experiment_config(CONFIG)
     specs = {item.name: item for item in discover_operator_parameters(build_workflow_tree(config), config)}

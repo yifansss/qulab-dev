@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import math
-import re
 from typing import Any
 
 from .errors import SequenceGenerationError
@@ -56,11 +55,43 @@ def is_asg_sequence_json(source: str) -> bool:
 
 
 def _channel_number(channel: dict[str, Any], index: int) -> int:
-    name = str(channel.get("channel_name", f"Channel {index + 1}"))
-    match = re.fullmatch(r"(?:channel\s*|ch)(\d+)", name.strip(), re.IGNORECASE)
-    number = int(match.group(1)) if match else int(channel.get("pbn", index)) + 1
+    """Return the one-based physical PB output selected by zero-based ``pbn``.
+
+    ``channel_name`` is an editor label and may be reordered independently of
+    the physical output.  Treating labels such as ``Channel 5`` as hardware
+    addresses silently routed pulses to the wrong connector whenever ``pbn``
+    and the display order differed.
+    """
+
+    pulses = channel.get("pulses", [])
+    raw_pbn = channel.get("pbn")
+    pulse_pbns = {
+        int(pulse["pbn"])
+        for pulse in pulses
+        if isinstance(pulse, dict) and pulse.get("pbn") is not None
+    }
+    if raw_pbn is None:
+        if len(pulse_pbns) == 1:
+            raw_pbn = next(iter(pulse_pbns))
+        elif not pulse_pbns:
+            raw_pbn = index
+        else:
+            raise SequenceGenerationError(
+                "sequence_compile_pbn_conflict",
+                f"Channel {index + 1} contains pulses assigned to multiple PB outputs: {sorted(pulse_pbns)}",
+            )
+    pbn = int(raw_pbn)
+    if pulse_pbns and pulse_pbns != {pbn}:
+        raise SequenceGenerationError(
+            "sequence_compile_pbn_conflict",
+            f"Channel {index + 1} pbn={pbn} conflicts with pulse pbn values {sorted(pulse_pbns)}",
+        )
+    number = pbn + 1
     if number < 1 or number > 24:
-        raise SequenceGenerationError("sequence_compile_channel", f"ASG channel must be in 1..24, got {number}")
+        raise SequenceGenerationError(
+            "sequence_compile_channel",
+            f"ASG pbn must be in 0..23, got {pbn}",
+        )
     return number
 
 

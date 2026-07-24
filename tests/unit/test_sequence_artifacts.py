@@ -2,6 +2,8 @@ import json
 from pathlib import Path
 
 from qulab.storage import RunStore
+from qulab.config import parse_experiment_config
+from qulab.gui.controller import _bind_frozen_sequence_artifacts
 
 
 def test_run_store_copies_all_sequence_files_as_artifacts(tmp_path: Path) -> None:
@@ -43,3 +45,27 @@ def test_run_store_copies_all_sequence_files_as_artifacts(tmp_path: Path) -> Non
             resource_sequence.read_text(encoding="utf-8"),
             point_sequence.read_text(encoding="utf-8"),
         }
+
+
+def test_runtime_load_is_rebound_to_archived_sequence_bytes(tmp_path: Path) -> None:
+    sequence = tmp_path / "live.json"
+    original = '[{"channel_name":"Trigger","pbn":0,"pulses":[]}]\n'
+    sequence.write_text(original, encoding="utf-8")
+    config = {
+        "name": "frozen",
+        "resources": {"asg": {"adapter": "mock_asg", "sequence_file": str(sequence)}},
+        "setup": [{"call": "asg.load_sequence", "args": {"sequence_file": str(sequence)}}],
+        "procedure": [],
+        "cleanup": [],
+    }
+    parsed = parse_experiment_config(config)
+    store = RunStore(root=tmp_path / "runs", experiment_name="frozen", config=config)
+    store.open()
+    sequence.write_text('[{"channel_name":"Changed","pbn":1,"pulses":[]}]\n', encoding="utf-8")
+
+    _bind_frozen_sequence_artifacts(parsed, store)
+
+    frozen_path = Path(parsed.procedure.setup[0].kwargs["sequence_file"])
+    assert frozen_path.read_text(encoding="utf-8") == original
+    assert parsed.context.resources["asg"].sequence_file == str(frozen_path)
+    store.close()

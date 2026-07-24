@@ -8,6 +8,7 @@ import re
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import RLock
 from typing import Any, TextIO
 
 import yaml
@@ -18,6 +19,7 @@ from qulab.core import (
     AnalysisStatus,
     ErrorRaised,
     Event,
+    InstrumentSnapshot,
     LogMessage,
     MeasurementCompleted,
     MeasurementStarted,
@@ -81,6 +83,7 @@ class RunStore:
         self._is_open = False
         self._raw_keys: set[str] = set()
         self._derived_keys: set[str] = set()
+        self._event_lock = RLock()
 
     @property
     def run_path(self) -> Path:
@@ -143,6 +146,14 @@ class RunStore:
         self._is_open = True
 
     def handle_event(self, event: Event) -> None:
+        # Analysis can emit derived events from a worker while acquisition is
+        # still publishing snapshots.  Serialize the complete append/update/
+        # metadata-write transaction so both threads cannot replace the same
+        # metadata.json.tmp file or publish metadata out of order.
+        with self._event_lock:
+            self._handle_event(event)
+
+    def _handle_event(self, event: Event) -> None:
         if not self._is_open:
             raise RuntimeError("RunStore must be opened before handling events")
         assert self.event_writer is not None
@@ -170,6 +181,16 @@ class RunStore:
             self.metadata_writer.metadata["error_count"] += 1
             self.metadata_writer.write()
             self._upsert_run()
+        elif isinstance(event, InstrumentSnapshot):
+            snapshots = self.metadata_writer.metadata.setdefault("instrument_snapshots", {})
+            snapshots[event.resource] = {
+                "action": event.action,
+                "point_id": event.point_id,
+                "coords": to_jsonable(event.coords),
+                "timestamp": event.timestamp,
+                "snapshot": to_jsonable(event.snapshot),
+            }
+            self.metadata_writer.write()
         elif isinstance(event, LogMessage):
             self._append_log(event)
 
@@ -207,10 +228,11 @@ class RunStore:
         self._is_open = False
 
     def set_analysis_summary(self, summary: dict[str, Any]) -> None:
-        if not self._is_open or self.metadata_writer is None:
-            raise RuntimeError("RunStore must be open to record analysis summary")
-        self.metadata_writer.metadata["analysis_summary"] = to_jsonable(summary)
-        self.metadata_writer.write()
+        with self._event_lock:
+            if not self._is_open or self.metadata_writer is None:
+                raise RuntimeError("RunStore must be open to record analysis summary")
+            self.metadata_writer.metadata["analysis_summary"] = to_jsonable(summary)
+            self.metadata_writer.write()
 
     def _prepare_sequence_bundles(self) -> None:
         assert self.metadata_writer is not None

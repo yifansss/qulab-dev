@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from threading import Event as ThreadEvent
+import time
 from typing import Any, Callable
 
 from .context import ExperimentContext
 from .events import (
     DataPoint,
     ErrorRaised,
+    InstrumentSnapshot,
     EventBus,
     MeasurementCompleted,
     MeasurementStarted,
@@ -49,6 +51,7 @@ class ExperimentExecutor:
         self.run_id = procedure.name
         self._cancel_requested = ThreadEvent()
         self._in_cleanup = False
+        self._deadlines: list[tuple[float, str]] = []
 
     def request_stop(self) -> None:
         """Request cooperative cancellation at the next safe executor boundary."""
@@ -103,6 +106,7 @@ class ExperimentExecutor:
         for step in steps:
             self._check_cancelled()
             self._execute_step(step)
+            self._check_cancelled()
 
     def _execute_step(self, step: Step) -> None:
         if not step.enabled:
@@ -172,7 +176,7 @@ class ExperimentExecutor:
         elif isinstance(step, MeasurementStep):
             self._execute_measurement(step)
         elif isinstance(step, RunStep):
-            self._execute_steps(step.body)
+            self._execute_run(step)
         elif isinstance(step, WaitStep):
             self._execute_wait(step)
         elif isinstance(step, CleanupStep):
@@ -205,6 +209,7 @@ class ExperimentExecutor:
                 if self.stop_requested and not self._in_cleanup:
                     raise ExperimentCancelled("Run stopped by operator") from exc
                 raise
+            self._emit_instrument_snapshot(step)
 
         if step.save_as:
             self.event_bus.emit(
@@ -215,6 +220,29 @@ class ExperimentExecutor:
                     metadata={"step_id": step.id, "step_name": step.name},
                 )
             )
+
+    def _emit_instrument_snapshot(self, step: ActionStep) -> None:
+        if not isinstance(step.action, str) or "." not in step.action:
+            return
+        resource_name, method_name = step.action.split(".", 1)
+        if method_name not in {
+            "arm", "start", "stop", "play", "output_on", "output_off",
+            "load_sequence", "compile_sequence",
+        }:
+            return
+        resource = self.context.resources.get(resource_name)
+        snapshot_method = getattr(resource, "snapshot", None)
+        if not callable(snapshot_method):
+            return
+        self.event_bus.emit(
+            InstrumentSnapshot(
+                resource=resource_name,
+                action=step.action,
+                point_id=self.context.current_point_id,
+                coords=self.context.snapshot_coords(),
+                snapshot=snapshot_method(),
+            )
+        )
 
     def _resolve_action(self, action: Callable[..., Any] | str | None) -> Callable[..., Any] | None:
         if action is None or callable(action):
@@ -334,10 +362,31 @@ class ExperimentExecutor:
             if self._cancel_requested.wait(step.duration_s):
                 self._check_cancelled()
 
+    def _execute_run(self, step: RunStep) -> None:
+        if step.timeout_s is None:
+            self._execute_steps(step.body)
+            return
+        timeout = float(step.timeout_s)
+        if timeout <= 0:
+            raise ValueError("run timeout_s must be > 0")
+        self._deadlines.append((time.monotonic() + timeout, step.name))
+        try:
+            self._execute_steps(step.body)
+        finally:
+            self._deadlines.pop()
+
     def _check_cancelled(self) -> None:
         if self.stop_requested and not self._in_cleanup:
             raise ExperimentCancelled("Run stopped by operator")
+        if not self._in_cleanup and self._deadlines:
+            deadline, name = min(self._deadlines)
+            if time.monotonic() > deadline:
+                raise ExperimentTimeoutError(f"Run step '{name}' exceeded its timeout")
 
 
 class ExperimentCancelled(RuntimeError):
     """Internal control-flow exception for an operator-requested stop."""
+
+
+class ExperimentTimeoutError(TimeoutError):
+    """A run block exceeded its configured cooperative deadline."""

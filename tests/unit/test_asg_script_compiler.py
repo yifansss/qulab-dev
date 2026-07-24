@@ -29,6 +29,34 @@ def test_repeated_pulse_expands_using_spacing() -> None:
     assert "Seq_Gen(L,1000,H,100,L,400,H,100,L,4)" in script
 
 
+def test_compiler_routes_by_physical_pbn_not_editor_channel_label() -> None:
+    source = json.dumps(
+        [{
+            "channel_name": "Channel 5",
+            "pbn": 7,
+            "pulses": [{"rise": 1, "start_time": 1.0, "time_on": 1.0, "d": 1.0, "pbn": 7}],
+        }]
+    )
+
+    script = compile_asg_sequence_json(source)
+
+    assert "ASG_OUT[8]" in script
+    assert "ASG_OUT[5]" not in script
+
+
+def test_compiler_rejects_channel_and_pulse_pbn_conflict() -> None:
+    source = json.dumps(
+        [{
+            "channel_name": "Trigger",
+            "pbn": 7,
+            "pulses": [{"rise": 1, "start_time": 1.0, "time_on": 1.0, "d": 1.0, "pbn": 6}],
+        }]
+    )
+
+    with pytest.raises(SequenceGenerationError, match="conflicts with pulse pbn"):
+        compile_asg_sequence_json(source)
+
+
 def test_empty_and_overlapping_sequences_fail_before_hardware_upload() -> None:
     with pytest.raises(SequenceGenerationError, match="no pulse outputs"):
         compile_asg_sequence_json(json.dumps([{"channel_name": "Channel 1", "pulses": []}]))
@@ -67,7 +95,16 @@ def test_asg_arm_compiles_json_enables_used_channel_and_uploads_script() -> None
         "mode",
         {"play_mode": 1, "trigger": "internal", "trigger_edge": "rising", "clock": "internal"},
     )
-    assert calls[1] == ("outputs", {"channel_limit": 1, "voltage_level": 0, "impedance": 0, "configure_childcards": False})
+    assert calls[1] == (
+        "outputs",
+        {
+            "channel_limit": 1,
+            "voltage_level": 0,
+            "impedance": 0,
+            "configure_childcards": False,
+            "channels": [1],
+        },
+    )
     assert calls[2][0] == "upload"
     assert "ASG_OUT[1]" in calls[2][1]
     assert calls[2][2]["configure_mode"] is False
@@ -111,3 +148,16 @@ def test_asg_arm_supports_proxy_style_upload_then_start_driver() -> None:
     assert adapter.arm() is True
     assert calls[0] == ("loop", 1)
     assert calls[1][0] == "upload"
+
+
+def test_asg_start_requires_explicit_driver_acknowledgement() -> None:
+    class Driver:
+        def start(self):
+            return None
+
+    adapter = PycontrolASGAdapter("asg", {})
+    adapter.connected = True
+    adapter._driver = Driver()
+
+    with pytest.raises(Exception, match="not explicitly acknowledged"):
+        adapter.start()

@@ -148,6 +148,16 @@ class ErrorRaised(Event):
 
 
 @dataclass
+class InstrumentSnapshot(Event):
+    type: str = field(init=False, default="InstrumentSnapshot")
+    resource: str = ""
+    action: str = ""
+    point_id: str | None = None
+    coords: dict[str, Any] = field(default_factory=dict)
+    snapshot: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class LogMessage(Event):
     type: str = field(init=False, default="LogMessage")
     level: str = "info"

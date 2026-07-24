@@ -409,7 +409,12 @@ def create_guided_sequence_widget(QtWidgets: Any, QtCore: Any, QtGui: Any, contr
                 saved_path = project_relative(result.saved_artifact.get("path"))
                 try:
                     if self._editor_target_line is not None: self._editor_target_line.setText(saved_path)
-                    if self._editor_apply_to_plan and self.selected_plan:
+                    # A protocol result can also be delivered directly (for
+                    # example after an editor reconnect), without the launch
+                    # callback state surviving.  In that case the selected
+                    # plan is still the unambiguous destination.
+                    apply_to_plan = self._editor_apply_to_plan or self._editor_target_line is None
+                    if apply_to_plan and self.selected_plan:
                         artifact = dict(result.saved_artifact); artifact["path"] = saved_path
                         controller.accept_sequence_editor_result(self.selected_plan, artifact); self._changed()
                 except Exception as exc: self.source_status.setText(str(exc))
