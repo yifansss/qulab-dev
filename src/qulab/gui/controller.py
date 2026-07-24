@@ -11,7 +11,7 @@ from typing import Any, Callable
 from qulab.config import ConfigLoadResult, ParsedExperiment, parse_experiment_config, validate_config_candidate
 from qulab.config.errors import ConfigValidationError
 from qulab.config.refs import parameter_refs_to_strings
-from qulab.core import Event, EventBus, ExperimentExecutor
+from qulab.core import ErrorRaised, Event, EventBus, ExperimentExecutor
 from qulab.analysis import create_live_compute_engine
 from qulab.analysis.validation import collect_known_raw_keys
 from qulab.sequence_files import discover_sequence_references, inspect_sequence_file
@@ -285,7 +285,13 @@ class OperatorController:
         *,
         connect_hardware: bool = False,
     ) -> RunViewModel:
-        parsed = self.parsed if self.parsed is not None else self._parse_current()
+        # Build fresh procedure/resource instances for every run.  A previous
+        # run disconnects its resources and freezes sequence paths into its own
+        # artifact directory; reusing that ParsedExperiment makes the next run
+        # inherit stale handles and stale run-local paths.
+        parsed = self._parse_current() if self.config is not None else self.parsed
+        if parsed is None:
+            raise RuntimeError("No parsed experiment is available")
         if not parsed.validation.ok:
             messages = "; ".join(issue.message for issue in parsed.validation.errors)
             raise ConfigValidationError(messages or "Config validation failed")
@@ -324,9 +330,20 @@ class OperatorController:
                 if event_callback is not None:
                     event_callback(event)
             bus.subscribe(live_callback)
-            if connect_hardware:
-                self._connect_resources(parsed.context.resources)
-            executor.run()
+            try:
+                if connect_hardware:
+                    self._connect_resources(parsed.context.resources)
+                executor.run()
+            except BaseException as exc:
+                if executor.state == "created":
+                    bus.emit(
+                        ErrorRaised(
+                            error_type=type(exc).__name__,
+                            message=str(exc),
+                            step_id="hardware_startup",
+                        )
+                    )
+                raise
         finally:
             try:
                 if connect_hardware:
@@ -915,15 +932,19 @@ class OperatorController:
             raise RuntimeError("No experiment config loaded")
 
     def _connect_resources(self, resources: dict[str, Any]) -> None:
-        connected: list[Any] = []
+        attempted: list[Any] = []
         try:
             for resource in resources.values():
                 if getattr(resource, "simulation", False):
                     continue
+                attempted.append(resource)
                 resource.connect()
-                connected.append(resource)
         except BaseException:
-            for resource in reversed(connected):
+            # connect() can allocate a subprocess, DLL/device handle, or task
+            # before raising.  Clean the failing resource as well as resources
+            # that connected earlier, otherwise the next run inherits a busy
+            # device even though no experiment became active.
+            for resource in reversed(attempted):
                 try:
                     resource.disconnect()
                 except Exception:

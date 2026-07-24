@@ -259,6 +259,7 @@ class PycontrolASGAdapter(_PycontrolAdapterBase):
         self.compiled_code: str | None = None
         self.output_channels: list[int] = []
         self.last_start_status: dict[str, Any] | None = None
+        self._prepared_signature: tuple[Any, ...] | None = None
         self._legacy_proxy_import_path: str | None = None
 
     def connect(self) -> None:
@@ -286,6 +287,8 @@ class PycontrolASGAdapter(_PycontrolAdapterBase):
             address = None if self.address in (None, "", "auto") else str(self.address)
             _require_acknowledged(self._driver.connect(address), "ASG24100.connect")
             self.connected = True
+            self._prepared_signature = None
+            self.last_start_status = None
         except Exception as exc:  # noqa: BLE001
             self._last_error = str(exc)
             raise InstrumentConnectionError(f"Failed to connect pycontrol ASG resource '{self.name}': {exc}") from exc
@@ -335,6 +338,28 @@ class PycontrolASGAdapter(_PycontrolAdapterBase):
             self.output_channels = sorted(
                 {int(channel) for channel in re.findall(r"ASG_OUT\s*\[\s*(\d+)\s*\]", self.compiled_code)}
             )
+            signature = (
+                self.compiled_code,
+                tuple(self.output_channels),
+                int(self.config.get("loop", 1)),
+                _bool_config(self.config, "configure_playback_mode", True),
+                int(self.config.get("play_mode", 1)),
+                str(self.config.get("trigger", "internal")),
+                str(self.config.get("trigger_edge", "rising")),
+                str(self.config.get("clock", "internal")),
+                int(self.config.get("voltage_level", 0)),
+                int(self.config.get("impedance", 0)),
+            )
+            if self._prepared_signature == signature:
+                # The waveform and all output-affecting settings are already
+                # resident.  Force a 1 -> 0 transition after the previous
+                # one-shot so the next start is a real playback edge, without
+                # recompiling, reconfiguring, or uploading the same waveform.
+                if self.running:
+                    _require_acknowledged(self._driver.stop(), "ASG24100.rearm")
+                    self.running = False
+                self.armed = True
+                return True
             configure_mode = _bool_config(self.config, "configure_playback_mode", True)
             configure_free_mode = getattr(self._driver, "configure_free_mode", None)
             if configure_mode and callable(configure_free_mode):
@@ -375,15 +400,18 @@ class PycontrolASGAdapter(_PycontrolAdapterBase):
                 if callable(set_loop):
                     _require_acknowledged(set_loop(int(self.config.get("loop", 1))), "ASG24100.set_loop")
                 _require_acknowledged(self._driver.upload_waveform(self.compiled_code), "ASG24100.upload_waveform")
+            self._prepared_signature = signature
         self.armed = True
         return True
 
     def start(self) -> bool:
         self._ensure_connected()
         _require_acknowledged(self._driver.start(), "ASG24100.start")
-        status_method = getattr(self._driver, "status", None)
-        if callable(status_method):
-            status = status_method()
+        status = getattr(self._driver, "last_start_status", None)
+        if not isinstance(status, dict):
+            status_method = getattr(self._driver, "status", None)
+            status = status_method() if callable(status_method) else None
+        if status is not None:
             if not isinstance(status, dict) or status.get("playback_state") not in {0, 1}:
                 raise RuntimeError(f"ASG start returned an invalid hardware status: {status!r}")
             # A short one-shot waveform may already have returned to 0 by the
@@ -404,6 +432,7 @@ class PycontrolASGAdapter(_PycontrolAdapterBase):
                 _require_acknowledged(self._driver.stop(), "ASG24100.stop")
         self.running = False
         self.armed = False
+        self._prepared_signature = None
         return False
 
     def disconnect(self) -> None:
@@ -414,6 +443,8 @@ class PycontrolASGAdapter(_PycontrolAdapterBase):
         try:
             super().disconnect()
         finally:
+            self._prepared_signature = None
+            self.last_start_status = None
             if self._legacy_proxy_import_path:
                 try:
                     sys.path.remove(self._legacy_proxy_import_path)

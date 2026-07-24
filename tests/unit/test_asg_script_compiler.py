@@ -161,3 +161,58 @@ def test_asg_start_requires_explicit_driver_acknowledgement() -> None:
 
     with pytest.raises(Exception, match="not explicitly acknowledged"):
         adapter.start()
+
+
+def test_asg_start_uses_status_returned_with_proxy_acknowledgement() -> None:
+    class Driver:
+        last_start_status = {"playback_state": 1, "loop": 1}
+
+        def start(self):
+            return True
+
+        def status(self):
+            raise AssertionError("start status must not be fetched twice")
+
+    adapter = PycontrolASGAdapter("asg", {})
+    adapter.connected = True
+    adapter._driver = Driver()
+
+    assert adapter.start() is True
+    assert adapter.last_start_status == {"playback_state": 1, "loop": 1}
+
+
+def test_asg_reuses_resident_waveform_and_only_resets_playback_between_points() -> None:
+    calls = []
+
+    class Driver:
+        def configure_free_mode(self, **kwargs):
+            calls.append("mode")
+            return True
+
+        def configure_output_channels(self, **kwargs):
+            calls.append("outputs")
+            return True
+
+        def upload_and_run(self, code, **kwargs):
+            calls.append("upload")
+            return True
+
+        def stop(self):
+            calls.append("rearm")
+            return True
+
+    adapter = PycontrolASGAdapter("asg", {})
+    adapter.connected = True
+    adapter._driver = Driver()
+    adapter.compiled_code = _source(
+        {"rise": 1, "start_time": 5.0, "time_on": 20.0, "d": 10.0, "pbn": 0}
+    )
+
+    assert adapter.arm() is True
+    assert calls == ["mode", "outputs", "upload"]
+
+    # start() leaves the adapter logically running until the next explicit
+    # re-arm, even when the physical one-shot has already completed.
+    adapter.running = True
+    assert adapter.arm() is True
+    assert calls == ["mode", "outputs", "upload", "rearm"]
